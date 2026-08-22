@@ -344,16 +344,21 @@ function updateHostUI(data) {
       el("host-alive-list").appendChild(li);
 
       const pPerks = p.perks || { abilityUsed: false, bulletUsed: false };
-      const isMafiaTeam = (p.role === "Mafia" || p.role === "Silent Mafia");
-      const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
       
+      // Silent Mafia has no active ability, so the host should NOT wait for them.
+      const needsNightAction = p.role === "Mafia" || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
+      
+      // Block host auto-advance if a player needs to answer the popup
       if (p.pendingRecruitment && activeMafiaCount === 0 && !p.nightTarget) {
         allNightActionsDone = false;
       } else if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && pPerks.abilityUsed)) {
         allNightActionsDone = false;
       }
 
-      if (!p.voteTarget) allDayVotesDone = false;
+      // Block Day advance until everyone votes
+      if (!p.voteTarget) {
+        allDayVotesDone = false;
+      }
 
     } else {
       el("host-dead-list").appendChild(li);
@@ -373,6 +378,7 @@ function updateHostUI(data) {
     btnAdvance.classList.remove("hidden");
   }
 
+  // AUTO ADVANCE - NIGHT
   if (data.gameState.phase === "NIGHT" && aliveCount > 0 && allNightActionsDone && !isAdvancing && !phaseTransitionInProgress) {
     isAdvancing = true;
     setTimeout(async () => {
@@ -381,10 +387,17 @@ function updateHostUI(data) {
           phaseTransitionInProgress = true;
           await advancePhase("DAWN");
         }
-      } catch (error) { console.error("Night auto advance failed:", error); } 
-      finally { phaseTransitionInProgress = false; isAdvancing = false; }
+      } catch (error) { 
+        console.error("Night auto advance failed:", error); 
+      } finally { 
+        phaseTransitionInProgress = false; 
+        isAdvancing = false; 
+      }
     }, 1500);
-  } else if (data.gameState.phase === "DAY_VOTE" && aliveCount > 0 && allDayVotesDone && !isAdvancing && !phaseTransitionInProgress) {
+  } 
+  
+  // AUTO ADVANCE - DAY VOTE
+  else if (data.gameState.phase === "DAY_VOTE" && aliveCount > 0 && allDayVotesDone && !isAdvancing && !phaseTransitionInProgress) {
     isAdvancing = true;
     setTimeout(async () => {
       try {
@@ -392,8 +405,12 @@ function updateHostUI(data) {
           phaseTransitionInProgress = true;
           await advancePhase("NIGHT");
         }
-      } catch (error) { console.error("Day vote auto advance failed:", error); } 
-      finally { phaseTransitionInProgress = false; isAdvancing = false; }
+      } catch (error) { 
+        console.error("Day vote auto advance failed:", error); 
+      } finally { 
+        phaseTransitionInProgress = false; 
+        isAdvancing = false; 
+      }
     }, 1500);
   }
 
@@ -410,9 +427,13 @@ function updateHostUI(data) {
   btnAdvance.onclick = async () => {
     if (phaseTransitionInProgress) return;
     phaseTransitionInProgress = true;
-    try { await advancePhase(nextPhase); } 
-    catch (error) { console.error("Manual phase advance failed:", error); } 
-    finally { phaseTransitionInProgress = false; }
+    try { 
+      await advancePhase(nextPhase); 
+    } catch (error) { 
+      console.error("Manual phase advance failed:", error); 
+    } finally { 
+      phaseTransitionInProgress = false; 
+    }
   };
 }
 
@@ -520,7 +541,13 @@ async function advancePhase(nextPhase) {
       updates[`rooms/${myRoomCode}/players/${actions["Jailor"].actor}/perks/bulletUsed`] = true;
     }
 
-    let framedPlayerId = farmerFrames.length > 0 ? farmerFrames[0].target : null;
+    // Farmer framing logic - Perk consumption mapped cleanly on host side
+    let framedPlayerId = null;
+    if (farmerFrames.length > 0) {
+      framedPlayerId = farmerFrames[0].target;
+      updates[`rooms/${myRoomCode}/players/${farmerFrames[0].actor}/perks/abilityUsed`] = true;
+    }
+
     let finalMafiaKillTarget = mafiaKills.length > 0 ? mafiaKills[0].target : null;
 
     if (finalMafiaKillTarget) {
@@ -528,7 +555,9 @@ async function advancePhase(nextPhase) {
       if (target !== docTarget) {
         if (target === bgTarget) {
           const bodyguardId = actions["Bodyguard"] ? actions["Bodyguard"].actor : null;
-          if (bodyguardId && docTarget !== bodyguardId && playersCache[bodyguardId]) deaths.push(bodyguardId);
+          if (bodyguardId && docTarget !== bodyguardId && playersCache[bodyguardId]) {
+             deaths.push(bodyguardId);
+          }
         } else {
           if (playersCache[target]) deaths.push(target);
         }
@@ -620,6 +649,10 @@ async function advancePhase(nextPhase) {
     });
   }
 
+  // =======================================================
+  // DAY VOTE -> NIGHT
+  // =======================================================
+
   if (nextPhase === "NIGHT") {
     let votes = {};
     let skipVotes = 0;
@@ -627,8 +660,10 @@ async function advancePhase(nextPhase) {
     Object.values(playersCache).forEach((p) => {
       if (!p.isAlive || !p.voteTarget) return;
       const weight = p.role === "Mayor" ? 2 : 1;
-      if (p.voteTarget === "skip") skipVotes += weight;
-      else if (playersCache[p.voteTarget] && playersCache[p.voteTarget].isAlive) {
+      
+      if (p.voteTarget === "skip") {
+        skipVotes += weight;
+      } else if (playersCache[p.voteTarget] && playersCache[p.voteTarget].isAlive) {
         votes[p.voteTarget] = (votes[p.voteTarget] || 0) + weight;
       }
     });
@@ -706,7 +741,9 @@ async function checkWinCondition() {
       });
       playPhaseAudio("LOBBY");
     }
-  } catch (error) { console.error("Win condition check failed:", error); }
+  } catch (error) { 
+    console.error("Win condition check failed:", error); 
+  }
 }
 
 // =========================================================
@@ -728,7 +765,9 @@ function updatePlayerUI(data) {
   el("player-phase-display").innerText = data.gameState.phase;
 
   if (me.role) {
-    myRoleData = ROLES[me.role] || (me.role === "Silent Mafia" ? { team: "Mafia", desc: "You were recruited into the Mafia and revived as a silent member. You have no active night abilities.", win: "Reach parity with the living village." } : {});
+    // Null fallback used instead of empty object to ensure texts render smoothly
+    myRoleData = ROLES[me.role] || (me.role === "Silent Mafia" ? { team: "Mafia", desc: "You were recruited into the Mafia and revived as a silent member. You have no active night abilities.", win: "Reach parity with the living village." } : null);
+    
     if (myRoleData) {
       el("role-name").innerText = me.role;
       
@@ -752,6 +791,7 @@ function updatePlayerUI(data) {
 
   select.classList.add("hidden");
   btn.classList.add("hidden");
+  btn.disabled = false; // Reset disabled state each UI render
   feedback.classList.add("hidden");
 
   const existingRecruitSelect = document.getElementById("recruit-target-select");
@@ -794,12 +834,16 @@ function updatePlayerUI(data) {
     acceptBtn.innerText = "Accept";
     acceptBtn.style.marginRight = "10px";
     acceptBtn.onclick = async () => {
+      acceptBtn.disabled = true;
+      declineBtn.disabled = true;
       await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), { role: "Mafia", wasRecruited: true, pendingRecruitment: false });
     };
 
     const declineBtn = document.createElement("button");
     declineBtn.innerText = "Decline";
     declineBtn.onclick = async () => {
+      acceptBtn.disabled = true;
+      declineBtn.disabled = true;
       await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), { pendingRecruitment: false });
     };
 
@@ -866,7 +910,10 @@ function updatePlayerUI(data) {
       prompt.innerText = `You have no action tonight. Sleep.${teamInfoText}`;
       btn.innerText = "Go to Sleep";
       btn.classList.remove("hidden");
-      btn.onclick = () => setAction("nightTarget", "sleep");
+      btn.onclick = () => {
+        btn.disabled = true;
+        setAction("nightTarget", "sleep");
+      };
     } else {
       prompt.innerText = (
         me.role === "Reviver" ? "Choose a player to revive:"
@@ -905,6 +952,7 @@ function updatePlayerUI(data) {
 
       btn.onclick = async () => {
         if (!select.value) return;
+        btn.disabled = true;
 
         if (me.role === "Mafia") {
           const recruitSel = document.getElementById("recruit-target-select");
@@ -913,10 +961,6 @@ function updatePlayerUI(data) {
           } else {
             await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/recruitTarget`), "none");
           }
-        }
-
-        if (me.role === "Farmer" && select.value !== "sleep") {
-          await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/perks/abilityUsed`), true);
         }
 
         setAction("nightTarget", select.value);
@@ -938,6 +982,7 @@ function updatePlayerUI(data) {
       btn.classList.remove("hidden");
       btn.onclick = () => {
         if (!select.value) return;
+        btn.disabled = true;
         setAction("voteTarget", select.value);
       };
     }
