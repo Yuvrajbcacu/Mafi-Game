@@ -1881,11 +1881,13 @@ function updatePlayerUI(data) {
         }
       }
 
+      // ADDED: Give Farmer the 'sleep' option alongside Jailor, Snatcher, and Reviver
       if (
         [
           "Jailor",
           "Snatcher",
-          "Reviver"
+          "Reviver",
+          "Farmer"
         ].includes(me.role)
       ) {
 
@@ -1919,7 +1921,8 @@ function updatePlayerUI(data) {
           }
         }
 
-        if (me.role === "Farmer") {
+        // ADDED: Only mark the Farmer's ability as used if they actually framed a target, not if they chose to sleep
+        if (me.role === "Farmer" && select.value !== "sleep") {
           await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/perks/abilityUsed`), true);
         }
 
