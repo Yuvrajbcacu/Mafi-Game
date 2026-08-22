@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mafia Party</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    
+    <!-- MAIN MENU -->
+    <div id="view-menu" class="view active">
+      <h1>MAFIA</h1>
+      <div class="card">
+        <button id="btn-create-room">Host New Game</button>
+        <hr>
+        <input type="text" id="join-room-code" placeholder="4-Letter Room Code" maxlength="4">
+        <input type="text" id="join-nickname" placeholder="Your Nickname" maxlength="12">
+        <button id="btn-join-room" class="btn-alt">Join Game</button>
+      </div>
+    </div>
+
+    <!-- HOST VIEW -->
+    <div id="view-host" class="view">
+      <h2>Room Code: <span id="host-room-code" class="highlight"></span></h2>
+      <div class="card">
+        <h3>Host Controls</h3>
+        <button id="btn-start-game">Start Game</button>
+        <button id="btn-advance-phase">Advance Phase</button>
+        <button id="btn-restart-game" class="btn-alt">Restart Match</button>
+      </div>
+      <div class="game-status">
+        <h3>Live Status: <span id="host-phase">LOBBY</span></h3>
+        <p id="host-announcements" class="highlight-red"></p>
+        <div class="lists-container">
+          <div>
+            <h4>Alive (<span id="host-alive-count">0</span>)</h4>
+            <ul id="host-alive-list"></ul>
+          </div>
+          <div>
+            <h4>Dead</h4>
+            <ul id="host-dead-list"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLAYER VIEW -->
+    <div id="view-player" class="view">
+      <div id="player-header">
+        <span id="player-name-display"></span>
+        <span id="player-phase-display">LOBBY</span>
+      </div>
+      
+      <!-- Role Card (Tap to Expand) -->
+      <details class="role-card">
+        <summary>View Secret Role Info</summary>
+        <div class="role-details">
+          <h3 id="role-name">Villager</h3>
+          <p id="role-desc"></p>
+          <p class="win-con"><strong>Win Condition:</strong> <span id="role-win"></span></p>
+        </div>
+      </details>
+
+      <div id="player-action-area" class="card">
+        <h3 id="action-prompt">Waiting for Host...</h3>
+        <select id="target-select" class="hidden">
+          <option value="">-- Select Target --</option>
+        </select>
+        <button id="btn-submit-action" class="hidden">Confirm Action</button>
+        <p id="action-feedback" class="highlight-red hidden"></p>
+      </div>
+      
+      <!-- Private Logs (e.g. Detective results) -->
+      <div id="player-private-logs" class="hidden card">
+        <h3>Private Intel</h3>
+        <ul id="private-log-list"></ul>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
