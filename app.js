@@ -262,6 +262,7 @@ el("btn-join-room").onclick = async () => {
         recruitTarget: null,
         voteTarget: null,
         pendingRecruitment: false,
+        wasRecruited: false,
 
         privateLogs: [],
 
@@ -494,14 +495,12 @@ function updateHostUI(data) {
         const isMafiaTeam = (p.role === "Mafia" || p.role === "Silent Mafia");
         const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
         
-        // Block auto-advance if they need to answer a recruitment prompt
         if (p.pendingRecruitment && activeMafiaCount === 0 && !p.nightTarget) {
           allNightActionsDone = false;
-        } else if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && p.perks.abilityUsed)) {
+        } else if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && p.perks?.abilityUsed)) {
           allNightActionsDone = false;
         }
 
-        // Day vote required
         if (!p.voteTarget) {
           allDayVotesDone = false;
         }
@@ -768,6 +767,21 @@ el("btn-start-game").onclick = async () => {
         `rooms/${myRoomCode}/players/${key}/pendingRecruitment`
       ] = false;
 
+      updates[
+        `rooms/${myRoomCode}/players/${key}/wasRecruited`
+      ] = false;
+
+      updates[
+        `rooms/${myRoomCode}/players/${key}/privateLogs`
+      ] = [];
+
+      updates[
+        `rooms/${myRoomCode}/players/${key}/perks`
+      ] = {
+        bulletUsed: false,
+        abilityUsed: false
+      };
+
     }
   );
 
@@ -860,7 +874,6 @@ async function advancePhase(nextPhase) {
       }
     );
 
-    // Support multiple Mafia/Silent Mafia kill actions collection
     let mafiaKills = [];
     let mafiaRecruits = [];
     let farmerFrames = [];
@@ -871,7 +884,6 @@ async function advancePhase(nextPhase) {
           mafiaKills.push({ actor: id, target: p.nightTarget });
         }
         
-        // ONLY ORIGINAL MAFIA CAN RECRUIT (wasRecruited must be false/undefined)
         if (p.role === "Mafia" && !p.wasRecruited && p.recruitTarget && p.recruitTarget !== "none") {
           mafiaRecruits.push({ actor: id, target: p.recruitTarget });
         }
@@ -930,7 +942,6 @@ async function advancePhase(nextPhase) {
     // -----------------------------------------
     let finalMafiaKillTarget = null;
     if (mafiaKills.length > 0) {
-      // Deterministic: pick the first valid kill target or unique if multiple
       finalMafiaKillTarget = mafiaKills[0].target;
     }
 
@@ -953,7 +964,6 @@ async function advancePhase(nextPhase) {
       }
     }
 
-    // Process Recruitment (Once Per Game Limitation verified by abilityUsed check)
     if (mafiaRecruits.length > 0) {
       let livingMafiaCount = 0;
       Object.values(playersCache).forEach(p => {
@@ -964,7 +974,6 @@ async function advancePhase(nextPhase) {
 
       if (livingMafiaCount < 2) {
         const recruitTargetId = mafiaRecruits[0].target;
-        // Make sure target is not Farmer and is alive
         if (playersCache[recruitTargetId] && playersCache[recruitTargetId].isAlive && playersCache[recruitTargetId].role !== "Farmer") {
           updates[`rooms/${myRoomCode}/players/${recruitTargetId}/pendingRecruitment`] = true;
           updates[`rooms/${myRoomCode}/players/${mafiaRecruits[0].actor}/perks/abilityUsed`] = true;
@@ -1566,7 +1575,6 @@ function updatePlayerUI(data) {
   btn.classList.add("hidden");
   feedback.classList.add("hidden");
 
-  // Remove extra dynamic controls if any exist from previous renders
   const existingRecruitSelect = document.getElementById("recruit-target-select");
   if (existingRecruitSelect) existingRecruitSelect.remove();
   const existingRecruitPrompt = document.getElementById("recruit-prompt-container");
@@ -1630,13 +1638,11 @@ function updatePlayerUI(data) {
     return;
   }
 
-  // Check how many active mafia are still alive
   let activeMafiaCount = 0;
   Object.values(playersCache).forEach(p => {
     if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) activeMafiaCount++;
   });
 
-  // Check for pending recruitment request (ONLY if original mafia has died)
   if (data.gameState.phase === "NIGHT" && me.pendingRecruitment && activeMafiaCount === 0) {
     prompt.innerText = "The Mafia has fallen! They selected you to take their place. Will you join the Mafia?";
     
@@ -1683,7 +1689,7 @@ function updatePlayerUI(data) {
 
         if (
           me.role === "Reviver" &&
-          !me.perks.abilityUsed
+          !me.perks?.abilityUsed
         ) {
           if (!p.isAlive) {
             select.innerHTML +=
@@ -1733,7 +1739,6 @@ function updatePlayerUI(data) {
     data.gameState.phase === "NIGHT"
   ) {
 
-    // Show partner info for Mafia / Farmer via private log or UI
     let teamInfoText = "";
     if (me.role === "Mafia" || me.role === "Silent Mafia") {
       let partners = [];
@@ -1773,14 +1778,14 @@ function updatePlayerUI(data) {
 
       (
         me.role === "Jailor" &&
-        me.perks.bulletUsed
+        me.perks?.bulletUsed
       )
 
       ||
 
       (
         me.role === "Snatcher" &&
-        me.perks.abilityUsed
+        me.perks?.abilityUsed
       )
 
       ||
@@ -1788,7 +1793,7 @@ function updatePlayerUI(data) {
       (
         me.role === "Reviver" &&
         (
-          me.perks.abilityUsed ||
+          me.perks?.abilityUsed ||
           deadCount === 0
         )
       )
@@ -1797,7 +1802,7 @@ function updatePlayerUI(data) {
 
       (
         me.role === "Farmer" &&
-        me.perks.abilityUsed
+        me.perks?.abilityUsed
       )
     ) {
 
@@ -1822,7 +1827,6 @@ function updatePlayerUI(data) {
 
     }
 
-    // Active role
     else {
 
       prompt.innerText =
@@ -1840,8 +1844,7 @@ function updatePlayerUI(data) {
           if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) livingMafiaCount++;
         });
 
-        // RECRUIT LIMITATION: A recruited player (!me.wasRecruited) can never see this option.
-        if (!me.perks.abilityUsed && !me.wasRecruited && livingMafiaCount < 2) {
+        if (!me.perks?.abilityUsed && !me.wasRecruited && livingMafiaCount < 2) {
           const recruitSelect = document.createElement("select");
           recruitSelect.id = "recruit-target-select";
           recruitSelect.innerHTML = '<option value="none">-- Optional: Recruit Player --</option>';
@@ -2087,7 +2090,7 @@ el("btn-restart-game").onclick =
 
         updates[
           `rooms/${myRoomCode}/players/${id}/wasRecruited`
-        ] = null;
+        ] = false;
 
         updates[
           `rooms/${myRoomCode}/players/${id}/privateLogs`
