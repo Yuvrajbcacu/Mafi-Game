@@ -22,6 +22,7 @@ let myRoomCode = localStorage.getItem('roomCode') || null;
 let myPlayerId = localStorage.getItem('playerId') || null;
 let playersCache = {};
 let currentPhase = "";
+let previousPhase = "";
 let myRoleData = {};
 let isAdvancing = false;
 
@@ -33,6 +34,7 @@ const ROLES = {
   Detective: { team: "Village", desc: "Investigate one player each night to learn if they are 'Mafia' or 'Not Mafia'.", win: "Eliminate the Mafia." },
   Jailor: { team: "Village", desc: "You have 1 bullet for the entire game. Shoot a suspect at night.", win: "Eliminate the Mafia.", perk: true },
   Snatcher: { team: "Village", desc: "Once per game, snatch someone's role at night. They become a Villager and you take their role.", win: "Eliminate the Mafia.", perk: true },
+  Reviver: { team: "Village", desc: "Once per game, bring one dead player back to life during the night.", win: "Eliminate the Mafia.", perk: true },
   Barman: { team: "Village", desc: "Distract one player each night. Their night action fails.", win: "Eliminate the Mafia." },
   Bodyguard: { team: "Village", desc: "Guard one player each night. If attacked, they survive and you die instead.", win: "Eliminate the Mafia." },
   Lookout: { team: "Village", desc: "Watch one player each night to see if anyone visited them.", win: "Eliminate the Mafia." },
@@ -100,8 +102,6 @@ el('btn-join-room').onclick = async () => {
 function listenToRoom(roomCode) {
   onValue(ref(db, `rooms/${roomCode}`), (snapshot) => {
     const data = snapshot.val();
-    
-    // If room is deleted
     if (!data) {
       if (!isHost) alert("The host has closed this room.");
       return clearSession();
@@ -115,11 +115,32 @@ function listenToRoom(roomCode) {
   });
 }
 
-// --- HOST LOGIC ---
+// --- HOST LOGIC & AUDIO ENGINE ---
+function playPhaseAudio(phase) {
+  if (!isHost) return;
+  const night = el('audio-night');
+  const dawn = el('audio-dawn');
+  const day = el('audio-day');
+  
+  night.pause(); dawn.pause(); day.pause();
+  
+  try {
+    if (phase === "NIGHT") { night.currentTime = 0; night.play(); }
+    else if (phase === "DAWN") { dawn.currentTime = 0; dawn.play(); }
+    else if (phase === "DAY_VOTE" || phase === "LOBBY") { day.currentTime = 0; day.play(); }
+  } catch(e) { console.log("Audio play blocked by browser:", e); }
+}
+
 function updateHostUI(data) {
   el('host-phase').innerText = data.gameState.phase;
   el('host-announcements').innerText = data.logs.announcement;
   
+  // Audio trigger
+  if (data.gameState.phase !== previousPhase) {
+    previousPhase = data.gameState.phase;
+    playPhaseAudio(data.gameState.phase);
+  }
+
   let aliveCount = 0;
   let allNightActionsDone = true;
   let allDayVotesDone = true;
@@ -152,7 +173,6 @@ function updateHostUI(data) {
     if (p.isAlive) { 
       aliveCount++; 
       el('host-alive-list').appendChild(li); 
-      // Check if player completed action
       if (!p.nightTarget) allNightActionsDone = false;
       if (!p.voteTarget) allDayVotesDone = false;
     } 
@@ -160,7 +180,6 @@ function updateHostUI(data) {
   });
   el('host-alive-count').innerText = aliveCount;
   
-  // Toggle Start vs Advance buttons based on phase
   const btnStart = el('btn-start-game');
   const btnAdvance = el('btn-advance-phase');
 
@@ -172,7 +191,6 @@ function updateHostUI(data) {
     btnAdvance.classList.remove('hidden');
   }
 
-  // AUTO ADVANCE ENGINE
   if (data.gameState.phase === "NIGHT" && aliveCount > 0 && allNightActionsDone && !isAdvancing) {
     isAdvancing = true;
     setTimeout(() => { advancePhase("DAWN").finally(() => isAdvancing = false); }, 1500);
@@ -192,8 +210,8 @@ el('btn-start-game').onclick = () => {
   const pKeys = Object.keys(playersCache);
   if (pKeys.length < 6 || pKeys.length > 9) return alert("Need 6 to 9 players.");
   
-  // Replaced one Villager with the Snatcher in the pool
-  let pool = ["Fool", "Doctor", "Detective", "Jailor", "Barman", "Bodyguard", "Lookout", "Mayor", "Snatcher", "Villager"];
+  // Added Reviver & Snatcher to pool
+  let pool = ["Fool", "Doctor", "Detective", "Jailor", "Barman", "Reviver", "Lookout", "Mayor", "Snatcher", "Villager"];
   pool = pool.sort(() => 0.5 - Math.random()).slice(0, pKeys.length - 1);
   pool.push("Mafia");
   pool = pool.sort(() => 0.5 - Math.random());
@@ -214,9 +232,9 @@ async function advancePhase(nextPhase) {
     let deaths = [];
     let logs = {};
     const addLog = (id, msg) => { if (!logs[id]) logs[id] = []; logs[id].push(msg); };
+    let revivedName = "";
     
     Object.entries(playersCache).forEach(([id, p]) => {
-      // Ignore 'sleep' commands during resolution
       if (p.isAlive && p.nightTarget && p.nightTarget !== 'sleep') {
         actions[p.role] = { actor: id, target: p.nightTarget };
       }
@@ -240,10 +258,7 @@ async function advancePhase(nextPhase) {
       const target = actions["Mafia"].target;
       if (target === docTarget) {
       } else if (target === bgTarget) {
-        if (docTarget === actions["Bodyguard"].actor) {
-        } else {
-           deaths.push(actions["Bodyguard"].actor); 
-        }
+        if (docTarget !== actions["Bodyguard"].actor) deaths.push(actions["Bodyguard"].actor); 
       } else {
         deaths.push(target);
       }
@@ -262,35 +277,43 @@ async function advancePhase(nextPhase) {
       addLog(actions["Lookout"].actor, `${visitors} people visited ${playersCache[target].name}.`);
     }
 
-    // SNATCHER ROLE SWAP
+    // SNATCHER
     if (actions["Snatcher"]) {
       const target = actions["Snatcher"].target;
       const snatcherId = actions["Snatcher"].actor;
       const targetRole = playersCache[target].role;
-
-      // Execute Role Swap
       updates[`rooms/${myRoomCode}/players/${snatcherId}/role`] = targetRole;
       updates[`rooms/${myRoomCode}/players/${target}/role`] = "Villager";
       updates[`rooms/${myRoomCode}/players/${snatcherId}/perks/abilityUsed`] = true;
-
-      // Push secret logs to both parties
       addLog(snatcherId, `You snatched a role! You are now the ${targetRole}.`);
       addLog(target, `Your role was snatched! You are now a Villager.`);
+    }
+
+    // REVIVER
+    if (actions["Reviver"]) {
+      const targetId = actions["Reviver"].target;
+      updates[`rooms/${myRoomCode}/players/${targetId}/isAlive`] = true;
+      updates[`rooms/${myRoomCode}/players/${targetId}/nightTarget`] = null;
+      updates[`rooms/${myRoomCode}/players/${targetId}/voteTarget`] = null;
+      updates[`rooms/${myRoomCode}/players/${actions["Reviver"].actor}/perks/abilityUsed`] = true;
+      revivedName = playersCache[targetId].name;
     }
 
     const uniqueDeaths = [...new Set(deaths)];
     uniqueDeaths.forEach(dId => { updates[`rooms/${myRoomCode}/players/${dId}/isAlive`] = false; });
     Object.entries(logs).forEach(([id, msgArray]) => { updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = msgArray; });
     
-    const deadNames = uniqueDeaths.map(id => playersCache[id].name).join(", ");
-    updates[`rooms/${myRoomCode}/logs/announcement`] = deadNames ? `The village wakes to find ${deadNames} murdered.` : "The village wakes peacefully. No one died.";
+    let deadNames = uniqueDeaths.map(id => playersCache[id].name).join(", ");
+    let finalAnnounce = deadNames ? `The village wakes to find ${deadNames} murdered.` : "The village wakes peacefully. No one died.";
+    if (revivedName) finalAnnounce += ` By a miracle, ${revivedName} was revived from the dead!`;
+    
+    updates[`rooms/${myRoomCode}/logs/announcement`] = finalAnnounce;
     Object.keys(playersCache).forEach(id => { updates[`rooms/${myRoomCode}/players/${id}/nightTarget`] = null; });
   }
 
   if (nextPhase === "NIGHT") {
     let votes = {};
     Object.values(playersCache).forEach(p => {
-      // Ignore 'skip' commands
       if (p.isAlive && p.voteTarget && p.voteTarget !== 'skip') {
         let weight = p.role === "Mayor" ? 2 : 1;
         votes[p.voteTarget] = (votes[p.voteTarget] || 0) + weight;
@@ -344,13 +367,13 @@ async function checkWinCondition() {
       [`rooms/${myRoomCode}/gameState/phase`]: "GAME_OVER",
       [`rooms/${myRoomCode}/logs/announcement`]: `${winner} WINS THE GAME!`
     });
+    playPhaseAudio("LOBBY"); // Play ending/day music on win
   }
 }
 
 // --- PLAYER LOGIC ---
 function updatePlayerUI(data) {
   const me = playersCache[myPlayerId];
-  
   if (!me) {
     alert("You have been removed from the room by the host.");
     clearSession();
@@ -379,7 +402,6 @@ function updatePlayerUI(data) {
   btn.classList.add('hidden');
   feedback.classList.add('hidden');
 
-  // UPDATE GRAVEYARD UI
   deadList.innerHTML = "";
   let deadCount = 0;
   Object.entries(playersCache).forEach(([id, p]) => {
@@ -395,20 +417,24 @@ function updatePlayerUI(data) {
     prompt.innerText = "You are DEAD. Please remain quiet.";
     return;
   }
-
   if (data.gameState.winner) {
     prompt.innerText = `Game Over. ${data.gameState.winner} wins.`;
     return;
   }
 
-  // Populate Alive Targets
+  // Populate Targets based on Role
   select.innerHTML = '<option value="">-- Select Target --</option>';
   Object.entries(playersCache).forEach(([id, p]) => {
-    if (p.isAlive) {
-      // Allow targeting self ONLY if Doctor
-      if (id !== myPlayerId || me.role === "Doctor") {
-        const selfTag = id === myPlayerId ? " (Yourself)" : "";
-        select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
+    if (me.role === "Reviver" && !me.perks.abilityUsed) {
+      // Reviver sees ONLY dead players
+      if (!p.isAlive) select.innerHTML += `<option value="${id}">${p.name}</option>`;
+    } else {
+      // Everyone else sees alive players
+      if (p.isAlive) {
+        if (id !== myPlayerId || me.role === "Doctor") {
+          const selfTag = id === myPlayerId ? " (Yourself)" : "";
+          select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
+        }
       }
     }
   });
@@ -416,15 +442,19 @@ function updatePlayerUI(data) {
   if (data.gameState.phase === "NIGHT") {
     if (me.nightTarget) {
       prompt.innerText = "Action locked in. Waiting for others.";
-    } else if (["Fool", "Mayor", "Villager"].includes(me.role) || (me.role === "Jailor" && me.perks.bulletUsed) || (me.role === "Snatcher" && me.perks.abilityUsed)) {
+    } else if (
+      ["Fool", "Mayor", "Villager"].includes(me.role) || 
+      (me.role === "Jailor" && me.perks.bulletUsed) || 
+      (me.role === "Snatcher" && me.perks.abilityUsed) ||
+      (me.role === "Reviver" && (me.perks.abilityUsed || deadCount === 0)) // Reviver must sleep if nobody is dead
+    ) {
       prompt.innerText = "You have no action tonight. Sleep.";
       btn.innerText = "Go to Sleep";
       btn.classList.remove('hidden');
       btn.onclick = () => setAction('nightTarget', 'sleep');
     } else {
-      prompt.innerText = "Choose your night target:";
-      // ONLY Jailor and Snatcher can skip their action voluntarily
-      if (me.role === "Jailor" || me.role === "Snatcher") {
+      prompt.innerText = me.role === "Reviver" ? "Choose a player to revive:" : "Choose your night target:";
+      if (["Jailor", "Snatcher", "Reviver"].includes(me.role)) {
         select.innerHTML += `<option value="sleep">Skip / Sleep</option>`;
       }
       select.classList.remove('hidden');
@@ -450,7 +480,6 @@ function updatePlayerUI(data) {
       };
     }
   } else {
-    // Dawn - manual trigger into Day Vote by host after discussion
     prompt.innerText = "Discuss with the town.";
   }
 
