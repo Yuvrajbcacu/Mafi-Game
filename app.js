@@ -98,7 +98,13 @@ el('btn-join-room').onclick = async () => {
 function listenToRoom(roomCode) {
   onValue(ref(db, `rooms/${roomCode}`), (snapshot) => {
     const data = snapshot.val();
-    if (!data) return clearSession();
+    
+    // If room is deleted (host closed it)
+    if (!data) {
+      if (!isHost) alert("The host has closed this room.");
+      return clearSession();
+    }
+    
     playersCache = data.players || {};
     currentPhase = data.gameState.phase;
     
@@ -126,7 +132,7 @@ function updateHostUI(data) {
     textSpan.innerText = `${p.name} ${data.gameState.phase !== 'LOBBY' && p.role ? `(${p.role})` : ''}`;
     li.appendChild(textSpan);
 
-    // Dynamic Kick / Remove Button
+    // Dynamic Kick Button
     const kickBtn = document.createElement('button');
     kickBtn.innerText = "KICK";
     kickBtn.style.padding = "4px 8px";
@@ -432,4 +438,23 @@ el('btn-restart-game').onclick = async () => {
     updates[`rooms/${myRoomCode}/players/${id}/perks`] = { bulletUsed: false };
   });
   await update(ref(db), updates);
+};
+
+// --- LEAVE / CLOSE ROOM LOGIC ---
+el('btn-leave-room').onclick = async () => {
+  if (confirm("Are you sure you want to leave the game?")) {
+    if (myRoomCode && myPlayerId) {
+      await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), null);
+    }
+    clearSession();
+  }
+};
+
+el('btn-close-room').onclick = async () => {
+  if (confirm("Close this room? All players will be kicked back to the main menu.")) {
+    if (myRoomCode) {
+      await set(ref(db, `rooms/${myRoomCode}`), null);
+    }
+    clearSession();
+  }
 };
