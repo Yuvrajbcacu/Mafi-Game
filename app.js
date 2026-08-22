@@ -49,7 +49,13 @@ let phaseTransitionInProgress = false;
 const ROLES = {
   Mafia: {
     team: "Mafia",
-    desc: "You are the lone imposter. Each night, choose one player to eliminate. Blend in during the day.",
+    desc: "You are part of the Mafia team. Each night, choose one player to eliminate and optionally choose one player to recruit. Blend in during the day.",
+    win: "Reach parity with the living village."
+  },
+
+  Farmer: {
+    team: "Mafia",
+    desc: "You are on the Mafia team. Once per game at night, you can frame a player so that the Detective sees them as Mafia.",
     win: "Reach parity with the living village."
   },
 
@@ -259,7 +265,9 @@ el("btn-join-room").onclick = async () => {
         isAlive: true,
 
         nightTarget: null,
+        recruitTarget: null,
         voteTarget: null,
+        pendingRecruitment: false,
 
         privateLogs: [],
 
@@ -483,13 +491,15 @@ function updateHostUI(data) {
         el("host-alive-list")
           .appendChild(li);
 
-        // Night action required
-        if (!p.nightTarget) {
+        // Night action required (Mafia needs nightTarget, Farmer needs nightTarget if alive, etc.)
+        const isMafiaTeam = (p.role === "Mafia" || p.role === "Silent Mafia");
+        const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Barman", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
+        
+        if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && p.perks.abilityUsed)) {
           allNightActionsDone = false;
         }
 
         // Day vote required
-        // "skip" is still truthy so it counts
         if (!p.voteTarget) {
           allDayVotesDone = false;
         }
@@ -548,9 +558,6 @@ function updateHostUI(data) {
       async () => {
 
         try {
-
-          // Make sure phase didn't change
-          // during the timeout.
 
           if (currentPhase === "NIGHT") {
 
@@ -721,10 +728,11 @@ el("btn-start-game").onclick = async () => {
     .sort(() => 0.5 - Math.random())
     .slice(
       0,
-      pKeys.length - 1
+      pKeys.length - 2
     );
 
   pool.push("Mafia");
+  pool.push("Farmer");
 
   pool = pool.sort(
     () => 0.5 - Math.random()
@@ -748,8 +756,16 @@ el("btn-start-game").onclick = async () => {
       ] = null;
 
       updates[
+        `rooms/${myRoomCode}/players/${key}/recruitTarget`
+      ] = null;
+
+      updates[
         `rooms/${myRoomCode}/players/${key}/voteTarget`
       ] = null;
+
+      updates[
+        `rooms/${myRoomCode}/players/${key}/pendingRecruitment`
+      ] = false;
 
     }
   );
@@ -843,6 +859,25 @@ async function advancePhase(nextPhase) {
       }
     );
 
+    // Support multiple Mafia/Silent Mafia kill actions collection
+    let mafiaKills = [];
+    let mafiaRecruits = [];
+    let farmerFrames = [];
+
+    Object.entries(playersCache).forEach(([id, p]) => {
+      if (p.isAlive) {
+        if ((p.role === "Mafia" || p.role === "Silent Mafia") && p.nightTarget && p.nightTarget !== "sleep") {
+          mafiaKills.push({ actor: id, target: p.nightTarget });
+        }
+        if (p.role === "Mafia" && p.recruitTarget && p.recruitTarget !== "none") {
+          mafiaRecruits.push({ actor: id, target: p.recruitTarget });
+        }
+        if (p.role === "Farmer" && p.nightTarget && p.nightTarget !== "sleep") {
+          farmerFrames.push({ actor: id, target: p.nightTarget });
+        }
+      }
+    });
+
     // -----------------------------------------
     // Barman block
     // -----------------------------------------
@@ -871,6 +906,13 @@ async function advancePhase(nextPhase) {
       delete actions[blockedRole];
     }
 
+    // Barman block for Mafia/Farmer specifically by ID if needed
+    if (blockedPlayerId) {
+      mafiaKills = mafiaKills.filter(k => k.actor !== blockedPlayerId);
+      mafiaRecruits = mafiaRecruits.filter(r => r.actor !== blockedPlayerId);
+      farmerFrames = farmerFrames.filter(f => f.actor !== blockedPlayerId);
+    }
+
     // -----------------------------------------
     // Doctor / Bodyguard
     // -----------------------------------------
@@ -894,7 +936,6 @@ async function advancePhase(nextPhase) {
       const target =
         actions["Jailor"].target;
 
-      // Doctor can save Jailor's target
       if (target !== docTarget) {
 
         if (playersCache[target]) {
@@ -908,43 +949,57 @@ async function advancePhase(nextPhase) {
     }
 
     // -----------------------------------------
-    // Mafia
+    // Farmer Frame Resolution
     // -----------------------------------------
+    let framedPlayerId = null;
+    if (farmerFrames.length > 0) {
+      framedPlayerId = farmerFrames[0].target;
+    }
 
-    if (actions["Mafia"]) {
+    // -----------------------------------------
+    // Mafia Single Kill & Recruitment Resolution
+    // -----------------------------------------
+    let finalMafiaKillTarget = null;
+    if (mafiaKills.length > 0) {
+      // Deterministic: pick the first valid kill target or unique if multiple
+      finalMafiaKillTarget = mafiaKills[0].target;
+    }
 
-      const target =
-        actions["Mafia"].target;
+    if (finalMafiaKillTarget) {
+      const target = finalMafiaKillTarget;
 
-      // Doctor saves Mafia target
       if (target === docTarget) {
-
-        // No death
-
-      }
-
-      // Bodyguard protects target
-      else if (target === bgTarget) {
-
-        const bodyguardId =
-          actions["Bodyguard"].actor;
-
-        // Doctor protecting Bodyguard
-        // means Bodyguard survives too
-        if (docTarget !== bodyguardId) {
-
+        // Protected by doctor
+      } else if (target === bgTarget) {
+        const bodyguardId = actions["Bodyguard"] ? actions["Bodyguard"].actor : null;
+        if (bodyguardId && docTarget !== bodyguardId) {
           if (playersCache[bodyguardId]) {
             deaths.push(bodyguardId);
           }
         }
-
-      }
-
-      // Normal Mafia kill
-      else {
-
+      } else {
         if (playersCache[target]) {
           deaths.push(target);
+        }
+      }
+    }
+
+    // Process Recruitment
+    if (mafiaRecruits.length > 0) {
+      // Check count of living mafia players first (< 2)
+      let livingMafiaCount = 0;
+      Object.values(playersCache).forEach(p => {
+        if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) {
+          livingMafiaCount++;
+        }
+      });
+
+      if (livingMafiaCount < 2) {
+        const recruitTargetId = mafiaRecruits[0].target;
+        // Make sure target is not Farmer and is alive
+        if (playersCache[recruitTargetId] && playersCache[recruitTargetId].isAlive && playersCache[recruitTargetId].role !== "Farmer") {
+          updates[`rooms/${myRoomCode}/players/${recruitTargetId}/pendingRecruitment`] = true;
+          updates[`rooms/${myRoomCode}/players/${mafiaRecruits[0].actor}/perks/abilityUsed`] = true;
         }
       }
     }
@@ -960,8 +1015,10 @@ async function advancePhase(nextPhase) {
 
       if (playersCache[target]) {
 
-        const isMafia =
-          playersCache[target].role === "Mafia";
+        let isMafia = playersCache[target].role === "Mafia" || playersCache[target].role === "Silent Mafia";
+        if (target === framedPlayerId) {
+          isMafia = true;
+        }
 
         addLog(
           actions["Detective"].actor,
@@ -996,6 +1053,9 @@ async function advancePhase(nextPhase) {
 
         }
       );
+
+      mafiaKills.forEach(k => { if (k.target === target) visitors++; });
+      farmerFrames.forEach(f => { if (f.target === target) visitors++; });
 
       if (playersCache[target]) {
 
@@ -1091,6 +1151,14 @@ async function advancePhase(nextPhase) {
           `rooms/${myRoomCode}/players/${targetId}/voteTarget`
         ] = null;
 
+        // If revived player was a recruited mafia before dying, restore as Silent Mafia
+        const oldRole = playersCache[targetId].role;
+        // Check if they were recruited previously (we can check if they were recruited or just handle based on state if needed, but per rule: "revived recruited Mafia return as Silent Mafia")
+        // To be safe, if they had been recruited (their role was Mafia but they weren't the original mafia, or stored explicitly), let's mark recruited players or check if they were converted. Let's add a flag `wasRecruited: true` when recruited!
+        if (playersCache[targetId].wasRecruited) {
+          updates[`rooms/${myRoomCode}/players/${targetId}/role`] = "Silent Mafia";
+        }
+
         updates[
           `rooms/${myRoomCode}/players/${reviverId}/perks/abilityUsed`
         ] = true;
@@ -1107,7 +1175,6 @@ async function advancePhase(nextPhase) {
     uniqueDeaths.forEach(
       (dId) => {
 
-        // Revived player must stay alive
         if (dId === revivedId) {
           return;
         }
@@ -1186,6 +1253,9 @@ async function advancePhase(nextPhase) {
         updates[
           `rooms/${myRoomCode}/players/${id}/nightTarget`
         ] = null;
+        updates[
+          `rooms/${myRoomCode}/players/${id}/recruitTarget`
+        ] = null;
       }
     );
   }
@@ -1199,7 +1269,6 @@ async function advancePhase(nextPhase) {
   let votes = {};
   let skipVotes = 0;
 
-  // Count votes
   Object.values(playersCache).forEach(
     (p) => {
 
@@ -1215,7 +1284,6 @@ async function advancePhase(nextPhase) {
           ? 2
           : 1;
 
-      // Skip counts as a real vote
       if (p.voteTarget === "skip") {
 
         skipVotes += weight;
@@ -1225,7 +1293,6 @@ async function advancePhase(nextPhase) {
         const target =
           playersCache[p.voteTarget];
 
-        // Only count votes for living players
         if (
           target &&
           target.isAlive
@@ -1238,7 +1305,6 @@ async function advancePhase(nextPhase) {
     }
   );
 
-  // Find highest player vote
   let maxPlayerVotes = 0;
   let leaders = [];
 
@@ -1262,9 +1328,6 @@ async function advancePhase(nextPhase) {
 
   let executed = null;
 
-  // A player executes ONLY if:
-  // 1. They are the unique highest player vote
-  // 2. Their votes are greater than Skip
   if (
     leaders.length === 1 &&
     maxPlayerVotes > skipVotes
@@ -1272,7 +1335,6 @@ async function advancePhase(nextPhase) {
     executed = leaders[0];
   }
 
-  // Execute
   if (
     executed &&
     playersCache[executed] &&
@@ -1327,7 +1389,6 @@ async function advancePhase(nextPhase) {
       `${reason} Nobody was executed.`;
   }
 
-  // Clear votes
   Object.keys(playersCache).forEach(
     (id) => {
       updates[
@@ -1406,12 +1467,12 @@ async function checkWinCondition() {
         }
 
         if (
-          p.role === "Mafia"
+          p.role === "Mafia" || p.role === "Silent Mafia"
         ) {
 
           aliveMafia++;
 
-        } else {
+        } else if (p.role !== "Fool") {
 
           aliveVillage++;
         }
@@ -1420,17 +1481,13 @@ async function checkWinCondition() {
 
     let winner = null;
 
-    // No Mafia left
     if (
       aliveMafia === 0
     ) {
 
       winner = "VILLAGE";
 
-    }
-
-    // Mafia reaches parity
-    else if (
+    } else if (
       aliveMafia >= aliveVillage
     ) {
 
@@ -1499,7 +1556,7 @@ function updatePlayerUI(data) {
   if (me.role) {
 
     myRoleData =
-      ROLES[me.role];
+      ROLES[me.role] || (me.role === "Silent Mafia" ? { team: "Mafia", desc: "You were recruited into the Mafia and revived as a silent member. You have no active night abilities.", win: "Reach parity with the living village." } : {});
 
     if (myRoleData) {
 
@@ -1539,6 +1596,12 @@ function updatePlayerUI(data) {
   select.classList.add("hidden");
   btn.classList.add("hidden");
   feedback.classList.add("hidden");
+
+  // Remove extra dynamic controls if any exist from previous renders
+  const existingRecruitSelect = document.getElementById("recruit-target-select");
+  if (existingRecruitSelect) existingRecruitSelect.remove();
+  const existingRecruitPrompt = document.getElementById("recruit-prompt-container");
+  if (existingRecruitPrompt) existingRecruitPrompt.remove();
 
   // -----------------------------------------
   // Dead players
@@ -1598,67 +1661,97 @@ function updatePlayerUI(data) {
     return;
   }
 
- // -----------------------------------------
-// Target options
-// -----------------------------------------
+  // Check for pending recruitment request
+  if (data.gameState.phase === "NIGHT" && me.pendingRecruitment) {
+    prompt.innerText = "The Mafia wants to recruit you!";
+    
+    const recruitContainer = document.createElement("div");
+    recruitContainer.id = "recruit-prompt-container";
+    recruitContainer.style.margin = "10px 0";
+    
+    const acceptBtn = document.createElement("button");
+    acceptBtn.innerText = "Accept";
+    acceptBtn.style.marginRight = "10px";
+    acceptBtn.onclick = async () => {
+      await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), {
+        role: "Mafia",
+        wasRecruited: true,
+        pendingRecruitment: false,
+        nightTarget: "sleep"
+      });
+    };
 
-select.innerHTML =
-  '<option value="">-- Select Target --</option>';
+    const declineBtn = document.createElement("button");
+    declineBtn.innerText = "Decline";
+    declineBtn.onclick = async () => {
+      await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), {
+        pendingRecruitment: false,
+        nightTarget: "sleep"
+      });
+    };
 
-Object.entries(playersCache).forEach(
-  ([id, p]) => {
+    recruitContainer.appendChild(acceptBtn);
+    recruitContainer.appendChild(declineBtn);
+    prompt.appendChild(recruitContainer);
+    return;
+  }
 
-    // NIGHT
-    if (data.gameState.phase === "NIGHT") {
+  // -----------------------------------------
+  // Target options
+  // -----------------------------------------
 
-      // Reviver sees ONLY dead players
-      if (
-        me.role === "Reviver" &&
-        !me.perks.abilityUsed
-      ) {
-        if (!p.isAlive) {
-          select.innerHTML +=
-            `<option value="${id}">${p.name}</option>`;
+  select.innerHTML =
+    '<option value="">-- Select Target --</option>';
+
+  Object.entries(playersCache).forEach(
+    ([id, p]) => {
+
+      if (data.gameState.phase === "NIGHT") {
+
+        if (
+          me.role === "Reviver" &&
+          !me.perks.abilityUsed
+        ) {
+          if (!p.isAlive) {
+            select.innerHTML +=
+              `<option value="${id}">${p.name}</option>`;
+          }
+
+          return;
+        }
+
+        if (p.isAlive) {
+
+          if (
+            id !== myPlayerId ||
+            me.role === "Doctor"
+          ) {
+            const selfTag =
+              id === myPlayerId
+                ? " (Yourself)"
+                : "";
+
+            select.innerHTML +=
+              `<option value="${id}">${p.name}${selfTag}</option>`;
+          }
         }
 
         return;
       }
 
-      // Other night roles see alive players
-      if (p.isAlive) {
+      if (data.gameState.phase === "DAY_VOTE") {
 
         if (
-          id !== myPlayerId ||
-          me.role === "Doctor"
+          p.isAlive &&
+          id !== myPlayerId
         ) {
-          const selfTag =
-            id === myPlayerId
-              ? " (Yourself)"
-              : "";
-
           select.innerHTML +=
-            `<option value="${id}">${p.name}${selfTag}</option>`;
+            `<option value="${id}">${p.name}</option>`;
         }
       }
-
-      return;
     }
+  );
 
-    // DAY VOTE
-    if (data.gameState.phase === "DAY_VOTE") {
-
-      // Reviver behaves like a normal player
-      // during daytime voting
-      if (
-        p.isAlive &&
-        id !== myPlayerId
-      ) {
-        select.innerHTML +=
-          `<option value="${id}">${p.name}</option>`;
-      }
-    }
-  }
-);
   // =======================================================
   // NIGHT
   // =======================================================
@@ -1667,20 +1760,40 @@ Object.entries(playersCache).forEach(
     data.gameState.phase === "NIGHT"
   ) {
 
-    // Already acted
+    // Show partner info for Mafia / Farmer via private log or UI
+    let teamInfoText = "";
+    if (me.role === "Mafia" || me.role === "Silent Mafia") {
+      let partners = [];
+      let farmerName = "";
+      Object.values(playersCache).forEach(p => {
+        if (p.isAlive) {
+          if ((p.role === "Mafia" || p.role === "Silent Mafia") && p.name !== me.name) partners.push(p.name);
+          if (p.role === "Farmer") farmerName = p.name;
+        }
+      });
+      if (partners.length > 0) teamInfoText += ` Fellow Mafia: ${partners.join(", ")}.`;
+      if (farmerName) teamInfoText += ` Farmer: ${farmerName}.`;
+    } else if (me.role === "Farmer") {
+      let mafiaNames = [];
+      Object.values(playersCache).forEach(p => {
+        if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) mafiaNames.push(p.name);
+      });
+      if (mafiaNames.length > 0) teamInfoText += ` Mafia partners: ${mafiaNames.join(", ")}.`;
+    }
+
     if (me.nightTarget) {
 
       prompt.innerText =
-        "Action locked in. Waiting for others.";
+        `Action locked in. Waiting for others.${teamInfoText}`;
     }
 
-    // No night ability
     else if (
 
       [
         "Fool",
         "Mayor",
-        "Villager"
+        "Villager",
+        "Silent Mafia"
       ].includes(me.role)
 
       ||
@@ -1706,10 +1819,17 @@ Object.entries(playersCache).forEach(
           deadCount === 0
         )
       )
+
+      ||
+
+      (
+        me.role === "Farmer" &&
+        me.perks.abilityUsed
+      )
     ) {
 
       prompt.innerText =
-        "You have no action tonight. Sleep.";
+        `You have no action tonight. Sleep.${teamInfoText}`;
 
       btn.innerText =
         "Go to Sleep";
@@ -1733,11 +1853,34 @@ Object.entries(playersCache).forEach(
     else {
 
       prompt.innerText =
-        me.role === "Reviver"
+        (me.role === "Reviver"
           ? "Choose a player to revive:"
-          : "Choose your night target:";
+          : me.role === "Mafia"
+          ? "Choose your kill target:"
+          : me.role === "Farmer"
+          ? "Choose a player to frame:"
+          : "Choose your night target:") + teamInfoText;
 
-      // Special roles can skip
+      if (me.role === "Mafia") {
+        // Add recruitment dropdown if not used and living mafia count < 2
+        let livingMafiaCount = 0;
+        Object.values(playersCache).forEach(p => {
+          if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) livingMafiaCount++;
+        });
+
+        if (!me.perks.abilityUsed && livingMafiaCount < 2) {
+          const recruitSelect = document.createElement("select");
+          recruitSelect.id = "recruit-target-select";
+          recruitSelect.innerHTML = '<option value="none">-- Optional: Recruit Player --</option>';
+          Object.entries(playersCache).forEach(([id, p]) => {
+            if (p.isAlive && p.role !== "Farmer" && id !== myPlayerId) {
+              recruitSelect.innerHTML += `<option value="${id}">${p.name}</option>`;
+            }
+          });
+          select.parentNode.insertBefore(recruitSelect, select.nextSibling);
+        }
+      }
+
       if (
         [
           "Jailor",
@@ -1761,10 +1904,23 @@ Object.entries(playersCache).forEach(
         "hidden"
       );
 
-      btn.onclick = () => {
+      btn.onclick = async () => {
 
         if (!select.value) {
           return;
+        }
+
+        if (me.role === "Mafia") {
+          const recruitSel = document.getElementById("recruit-target-select");
+          if (recruitSel && recruitSel.value && recruitSel.value !== "none") {
+            await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/recruitTarget`), recruitSel.value);
+          } else {
+            await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/recruitTarget`), "none");
+          }
+        }
+
+        if (me.role === "Farmer") {
+          await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/perks/abilityUsed`), true);
         }
 
         setAction(
@@ -1784,7 +1940,6 @@ Object.entries(playersCache).forEach(
     data.gameState.phase === "DAY_VOTE"
   ) {
 
-    // Vote already submitted
     if (me.voteTarget) {
 
       if (
@@ -1807,7 +1962,6 @@ Object.entries(playersCache).forEach(
 
     }
 
-    // Vote not submitted
     else {
 
       prompt.innerText =
@@ -1841,10 +1995,6 @@ Object.entries(playersCache).forEach(
     }
 
   }
-
-  // =======================================================
-  // OTHER PHASES
-  // =======================================================
 
   else {
 
@@ -1950,7 +2100,19 @@ el("btn-restart-game").onclick =
         ] = null;
 
         updates[
+          `rooms/${myRoomCode}/players/${id}/recruitTarget`
+        ] = null;
+
+        updates[
           `rooms/${myRoomCode}/players/${id}/voteTarget`
+        ] = null;
+
+        updates[
+          `rooms/${myRoomCode}/players/${id}/pendingRecruitment`
+        ] = false;
+
+        updates[
+          `rooms/${myRoomCode}/players/${id}/wasRecruited`
         ] = null;
 
         updates[
