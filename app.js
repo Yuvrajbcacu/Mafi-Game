@@ -282,12 +282,11 @@ async function checkWinCondition() {
 
   if (winner) {
     await update(ref(db), { 
-      `rooms/${myRoomCode}/gameState/winner`: winner,
-      `rooms/${myRoomCode}/gameState/phase`: "GAME_OVER",
-      `rooms/${myRoomCode}/logs/announcement`: `${winner} WINS THE GAME!`
+      [`rooms/${myRoomCode}/gameState/winner`]: winner,
+      [`rooms/${myRoomCode}/gameState/phase`]: "GAME_OVER",
+      [`rooms/${myRoomCode}/logs/announcement`]: `${winner} WINS THE GAME!`
     });
   }
-}
 
 // --- PLAYER LOGIC ---
 function updatePlayerUI(data) {
@@ -384,8 +383,8 @@ async function setAction(field, value) {
 
 el('btn-restart-game').onclick = async () => {
   const updates = { 
-    `rooms/${myRoomCode}/gameState`: { phase: "LOBBY", round: 1, winner: null },
-    `rooms/${myRoomCode}/logs/announcement`: "Lobby restarted."
+    [`rooms/${myRoomCode}/gameState`]: { phase: "LOBBY", round: 1, winner: null },
+    [`rooms/${myRoomCode}/logs/announcement`]: "Lobby restarted."
   };
   Object.keys(playersCache).forEach(id => {
     updates[`rooms/${myRoomCode}/players/${id}/isAlive`] = true;
