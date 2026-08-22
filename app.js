@@ -287,6 +287,7 @@ async function checkWinCondition() {
       [`rooms/${myRoomCode}/logs/announcement`]: `${winner} WINS THE GAME!`
     });
   }
+}
 
 // --- PLAYER LOGIC ---
 function updatePlayerUI(data) {
