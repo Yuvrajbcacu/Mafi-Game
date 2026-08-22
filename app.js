@@ -116,21 +116,51 @@ function updateHostUI(data) {
   el('host-alive-list').innerHTML = "";
   el('host-dead-list').innerHTML = "";
   
-  Object.values(playersCache).forEach(p => {
+  Object.entries(playersCache).forEach(([id, p]) => {
     const li = document.createElement('li');
-    li.innerText = `${p.name} ${data.gameState.phase !== 'LOBBY' && p.role ? `(${p.role})` : ''}`;
+    li.style.display = "flex";
+    li.style.justifyContent = "space-between";
+    li.style.alignItems = "center";
+    
+    const textSpan = document.createElement('span');
+    textSpan.innerText = `${p.name} ${data.gameState.phase !== 'LOBBY' && p.role ? `(${p.role})` : ''}`;
+    li.appendChild(textSpan);
+
+    // Dynamic Kick / Remove Button
+    const kickBtn = document.createElement('button');
+    kickBtn.innerText = "KICK";
+    kickBtn.style.padding = "4px 8px";
+    kickBtn.style.width = "auto";
+    kickBtn.style.fontSize = "0.7rem";
+    kickBtn.onclick = async () => {
+      if (confirm(`Are you sure you want to remove ${p.name} from the game?`)) {
+        await set(ref(db, `rooms/${myRoomCode}/players/${id}`), null);
+      }
+    };
+    li.appendChild(kickBtn);
+
     if (p.isAlive) { aliveCount++; el('host-alive-list').appendChild(li); } 
     else { el('host-dead-list').appendChild(li); }
   });
   el('host-alive-count').innerText = aliveCount;
   
-  // Dynamic host button
-  const btn = el('btn-advance-phase');
-  if(data.gameState.winner) { btn.disabled = true; return; }
-  btn.disabled = false;
+  // Toggle Start vs Advance buttons based on phase
+  const btnStart = el('btn-start-game');
+  const btnAdvance = el('btn-advance-phase');
+
+  if (data.gameState.phase === "LOBBY") {
+    btnStart.classList.remove('hidden');
+    btnAdvance.classList.add('hidden');
+  } else {
+    btnStart.classList.add('hidden');
+    btnAdvance.classList.remove('hidden');
+  }
+
+  if(data.gameState.winner) { btnAdvance.disabled = true; return; }
+  btnAdvance.disabled = false;
   const phaseFlow = { "LOBBY": "NIGHT", "NIGHT": "DAWN", "DAWN": "DAY_VOTE", "DAY_VOTE": "NIGHT" };
-  btn.innerText = `Advance to ${phaseFlow[currentPhase] || 'NIGHT'}`;
-  btn.onclick = () => advancePhase(phaseFlow[currentPhase]);
+  btnAdvance.innerText = `Advance to ${phaseFlow[currentPhase] || 'NIGHT'}`;
+  btnAdvance.onclick = () => advancePhase(phaseFlow[currentPhase]);
 }
 
 el('btn-start-game').onclick = () => {
@@ -292,7 +322,13 @@ async function checkWinCondition() {
 // --- PLAYER LOGIC ---
 function updatePlayerUI(data) {
   const me = playersCache[myPlayerId];
-  if (!me) return;
+  
+  // Detection for being Kicked by Host
+  if (!me) {
+    alert("You have been removed from the room by the host.");
+    clearSession();
+    return;
+  }
   
   el('player-name-display').innerText = me.name;
   el('player-phase-display').innerText = data.gameState.phase;
