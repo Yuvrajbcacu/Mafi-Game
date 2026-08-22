@@ -21,8 +21,14 @@
       </div>
     </div>
 
-    <!-- HOST VIEW -->
+    <!-- HOST VIEW & AUDIO TRACKS -->
     <div id="view-host" class="view">
+      
+      <!-- Audio Elements (Host Only) -->
+      <audio id="audio-night" src="night.mp3" loop></audio>
+      <audio id="audio-dawn" src="dawn.mp3"></audio>
+      <audio id="audio-day" src="day.mp3" loop></audio>
+
       <h2>Room Code: <span id="host-room-code" class="highlight"></span></h2>
       <div class="card">
         <h3>Host Controls</h3>
@@ -74,7 +80,7 @@
         <p id="action-feedback" class="highlight-red hidden"></p>
       </div>
       
-      <!-- Private Logs (e.g. Detective results) -->
+      <!-- Private Logs -->
       <div id="player-private-logs" class="hidden card">
         <h3>Private Intel</h3>
         <ul id="private-log-list"></ul>
