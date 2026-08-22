@@ -3,15 +3,15 @@ import { getDatabase, ref, set, get, onValue, update } from "https://www.gstatic
 
 // --- PASTE YOUR FIREBASE CONFIG HERE ---
 const firebaseConfig = {
-    apiKey: "AIzaSyDgg2Qzog5V-M2-LEb0Oigllli1he1le3o",
-    authDomain: "realmafia-dbad3.firebaseapp.com",
-    databaseURL: "https://realmafia-dbad3-default-rtdb.firebaseio.com",
-    projectId: "realmafia-dbad3",
-    storageBucket: "realmafia-dbad3.firebasestorage.app",
-    messagingSenderId: "260346311431",
-    appId: "1:260346311431:web:fe048055078bd089a00ba2",
-    measurementId: "G-DV6SC1FBKB"
-  };
+  apiKey: "AIzaSyDgg2Qzog5V-M2-LEb0Oigllli1he1le3o",
+  authDomain: "realmafia-dbad3.firebaseapp.com",
+  databaseURL: "https://realmafia-dbad3-default-rtdb.firebaseio.com",
+  projectId: "realmafia-dbad3",
+  storageBucket: "realmafia-dbad3.firebasestorage.app",
+  messagingSenderId: "260346311431",
+  appId: "1:260346311431:web:fe048055078bd089a00ba2",
+  measurementId: "G-DV6SC1FBKB"
+};
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
@@ -135,7 +135,6 @@ function updateHostUI(data) {
   el('host-phase').innerText = data.gameState.phase;
   el('host-announcements').innerText = data.logs.announcement;
   
-  // Audio trigger
   if (data.gameState.phase !== previousPhase) {
     previousPhase = data.gameState.phase;
     playPhaseAudio(data.gameState.phase);
@@ -155,7 +154,7 @@ function updateHostUI(data) {
     li.style.alignItems = "center";
     
     const textSpan = document.createElement('span');
-    textSpan.innerText = p.name; // Host blind setup
+    textSpan.innerText = p.name;
     li.appendChild(textSpan);
 
     const kickBtn = document.createElement('button');
@@ -210,7 +209,6 @@ el('btn-start-game').onclick = () => {
   const pKeys = Object.keys(playersCache);
   if (pKeys.length < 6 || pKeys.length > 9) return alert("Need 6 to 9 players.");
   
-  // Added Reviver & Snatcher to pool
   let pool = ["Fool", "Doctor", "Detective", "Jailor", "Barman", "Reviver", "Lookout", "Mayor", "Snatcher", "Villager"];
   pool = pool.sort(() => 0.5 - Math.random()).slice(0, pKeys.length - 1);
   pool.push("Mafia");
@@ -277,16 +275,18 @@ async function advancePhase(nextPhase) {
       addLog(actions["Lookout"].actor, `${visitors} people visited ${playersCache[target].name}.`);
     }
 
-    // SNATCHER
+    // SNATCHER (Updated: Only works if the Snatcher survives the night)
     if (actions["Snatcher"]) {
-      const target = actions["Snatcher"].target;
       const snatcherId = actions["Snatcher"].actor;
-      const targetRole = playersCache[target].role;
-      updates[`rooms/${myRoomCode}/players/${snatcherId}/role`] = targetRole;
-      updates[`rooms/${myRoomCode}/players/${target}/role`] = "Villager";
-      updates[`rooms/${myRoomCode}/players/${snatcherId}/perks/abilityUsed`] = true;
-      addLog(snatcherId, `You snatched a role! You are now the ${targetRole}.`);
-      addLog(target, `Your role was snatched! You are now a Villager.`);
+      if (!deaths.includes(snatcherId)) {
+        const target = actions["Snatcher"].target;
+        const targetRole = playersCache[target].role;
+        updates[`rooms/${myRoomCode}/players/${snatcherId}/role`] = targetRole;
+        updates[`rooms/${myRoomCode}/players/${target}/role`] = "Villager";
+        updates[`rooms/${myRoomCode}/players/${snatcherId}/perks/abilityUsed`] = true;
+        addLog(snatcherId, `You snatched a role! You are now the ${targetRole}.`);
+        addLog(target, `Your role was snatched! You are now a Villager.`);
+      }
     }
 
     // REVIVER
@@ -367,7 +367,7 @@ async function checkWinCondition() {
       [`rooms/${myRoomCode}/gameState/phase`]: "GAME_OVER",
       [`rooms/${myRoomCode}/logs/announcement`]: `${winner} WINS THE GAME!`
     });
-    playPhaseAudio("LOBBY"); // Play ending/day music on win
+    playPhaseAudio("LOBBY");
   }
 }
 
@@ -422,14 +422,11 @@ function updatePlayerUI(data) {
     return;
   }
 
-  // Populate Targets based on Role
   select.innerHTML = '<option value="">-- Select Target --</option>';
   Object.entries(playersCache).forEach(([id, p]) => {
     if (me.role === "Reviver" && !me.perks.abilityUsed) {
-      // Reviver sees ONLY dead players
       if (!p.isAlive) select.innerHTML += `<option value="${id}">${p.name}</option>`;
     } else {
-      // Everyone else sees alive players
       if (p.isAlive) {
         if (id !== myPlayerId || me.role === "Doctor") {
           const selfTag = id === myPlayerId ? " (Yourself)" : "";
@@ -446,7 +443,7 @@ function updatePlayerUI(data) {
       ["Fool", "Mayor", "Villager"].includes(me.role) || 
       (me.role === "Jailor" && me.perks.bulletUsed) || 
       (me.role === "Snatcher" && me.perks.abilityUsed) ||
-      (me.role === "Reviver" && (me.perks.abilityUsed || deadCount === 0)) // Reviver must sleep if nobody is dead
+      (me.role === "Reviver" && (me.perks.abilityUsed || deadCount === 0))
     ) {
       prompt.innerText = "You have no action tonight. Sleep.";
       btn.innerText = "Go to Sleep";
