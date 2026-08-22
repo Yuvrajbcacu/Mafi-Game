@@ -43,6 +43,20 @@ let isAdvancing = false;
 let phaseTransitionInProgress = false;
 
 // =========================================================
+// HELPER METHODS
+// =========================================================
+
+const getActiveMafiaCount = (players) => {
+  let count = 0;
+  Object.values(players || {}).forEach(p => {
+    if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) {
+      count++;
+    }
+  });
+  return count;
+};
+
+// =========================================================
 // ROLE ROSTER
 // =========================================================
 
@@ -52,70 +66,59 @@ const ROLES = {
     desc: "You are part of the Mafia team. Each night, choose one player to eliminate and optionally choose one player to recruit. Blend in during the day.",
     win: "Reach parity with the living village."
   },
-
   Farmer: {
     team: "Mafia",
     desc: "You are on the Mafia team. Once per game at night, you can frame a player so that the Detective sees them as Mafia.",
     win: "Reach parity with the living village."
   },
-
   Fool: {
     team: "Neutral",
     desc: "You have no night powers. Act suspicious and convince the town to vote you out.",
     win: "Get voted out during Daytime voting."
   },
-
   Doctor: {
     team: "Village",
     desc: "Choose one player each night to protect from the Mafia's attack. You can protect yourself.",
     win: "Eliminate the Mafia."
   },
-
   Detective: {
     team: "Village",
     desc: "Investigate one player each night to learn if they are 'Mafia' or 'Not Mafia'.",
     win: "Eliminate the Mafia."
   },
-
   Jailor: {
     team: "Village",
     desc: "You have 1 bullet for the entire game. Shoot a suspect at night.",
     win: "Eliminate the Mafia.",
     perk: true
   },
-
   Snatcher: {
     team: "Village",
     desc: "Once per game, snatch someone's role at night. They become a Villager and you take their role.",
     win: "Eliminate the Mafia.",
     perk: true
   },
-
   Reviver: {
     team: "Village",
     desc: "Once per game, bring one dead player back to life during the night.",
     win: "Eliminate the Mafia.",
     perk: true
   },
-
   Bodyguard: {
     team: "Village",
     desc: "Guard one player each night. If attacked, they survive and you die instead.",
     win: "Eliminate the Mafia."
   },
-
   Lookout: {
     team: "Village",
     desc: "Watch one player each night to see if anyone visited them.",
     win: "Eliminate the Mafia."
   },
-
   Mayor: {
     team: "Village",
     desc: "Your vote during daytime secretly counts as 2 votes.",
     win: "Eliminate the Mafia."
   },
-
   Villager: {
     team: "Village",
     desc: "You have no night abilities. Use daytime logic to find the Mafia.",
@@ -128,15 +131,9 @@ const ROLES = {
 // =========================================================
 
 const switchView = (id) => {
-  document
-    .querySelectorAll(".view")
-    .forEach((v) => v.classList.remove("active"));
-
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   const target = document.getElementById(id);
-
-  if (target) {
-    target.classList.add("active");
-  }
+  if (target) target.classList.add("active");
 };
 
 const el = (id) => document.getElementById(id);
@@ -148,13 +145,9 @@ const el = (id) => document.getElementById(id);
 window.onload = async () => {
   if (myRoomCode && myPlayerId) {
     try {
-      const pSnap = await get(
-        ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`)
-      );
-
+      const pSnap = await get(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`));
       if (pSnap.exists()) {
         isHost = false;
-
         listenToRoom(myRoomCode);
         switchView("view-player");
       } else {
@@ -170,10 +163,8 @@ window.onload = async () => {
 const clearSession = () => {
   localStorage.removeItem("roomCode");
   localStorage.removeItem("playerId");
-
   myRoomCode = null;
   myPlayerId = null;
-
   switchView("view-menu");
 };
 
@@ -183,31 +174,17 @@ const clearSession = () => {
 
 el("btn-create-room").onclick = async () => {
   try {
-    myRoomCode = Math.random()
-      .toString(36)
-      .substring(2, 6)
-      .toUpperCase();
-
+    myRoomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
     isHost = true;
 
     await set(ref(db, `rooms/${myRoomCode}`), {
-      gameState: {
-        phase: "LOBBY",
-        round: 1,
-        winner: null
-      },
-
+      gameState: { phase: "LOBBY", round: 1, winner: null },
       players: {},
-
-      logs: {
-        announcement: "Waiting for players to join..."
-      }
+      logs: { announcement: "Waiting for players to join..." }
     });
 
     el("host-room-code").innerText = myRoomCode;
-
     listenToRoom(myRoomCode);
-
     switchView("view-host");
   } catch (error) {
     console.error("Room creation failed:", error);
@@ -220,63 +197,38 @@ el("btn-create-room").onclick = async () => {
 // =========================================================
 
 el("btn-join-room").onclick = async () => {
-  const code = el("join-room-code").value
-    .trim()
-    .toUpperCase();
-
+  const code = el("join-room-code").value.trim().toUpperCase();
   const name = el("join-nickname").value.trim();
 
-  if (code.length !== 4 || !name) {
-    return alert("Enter valid code and name.");
-  }
+  if (code.length !== 4 || !name) return alert("Enter valid code and name.");
 
   try {
-    const roomSnap = await get(
-      ref(db, `rooms/${code}`)
-    );
-
-    if (!roomSnap.exists()) {
-      return alert("Room not found.");
-    }
+    const roomSnap = await get(ref(db, `rooms/${code}`));
+    if (!roomSnap.exists()) return alert("Room not found.");
 
     const roomData = roomSnap.val();
-
-    if (roomData.gameState.phase !== "LOBBY") {
-      return alert("Game already in progress.");
-    }
+    if (roomData.gameState.phase !== "LOBBY") return alert("Game already in progress.");
 
     myPlayerId = `p_${Date.now()}`;
     myRoomCode = code;
-
     localStorage.setItem("roomCode", myRoomCode);
     localStorage.setItem("playerId", myPlayerId);
 
-    await set(
-      ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`),
-      {
-        name,
-        role: "",
-        isAlive: true,
-
-        nightTarget: null,
-        recruitTarget: null,
-        voteTarget: null,
-        pendingRecruitment: false,
-        wasRecruited: false,
-
-        privateLogs: [],
-
-        perks: {
-          bulletUsed: false,
-          abilityUsed: false
-        }
-      }
-    );
+    await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), {
+      name,
+      role: "",
+      isAlive: true,
+      nightTarget: null,
+      recruitTarget: null,
+      voteTarget: null,
+      pendingRecruitment: false,
+      wasRecruited: false,
+      privateLogs: [],
+      perks: { bulletUsed: false, abilityUsed: false }
+    });
 
     listenToRoom(myRoomCode);
-
     switchView("view-player");
-
   } catch (error) {
     console.error("Join failed:", error);
     alert("Could not join room.");
@@ -291,32 +243,19 @@ function listenToRoom(roomCode) {
   onValue(
     ref(db, `rooms/${roomCode}`),
     (snapshot) => {
-
       const data = snapshot.val();
-
       if (!data) {
-
-        if (!isHost) {
-          alert("The host has closed this room.");
-        }
-
+        if (!isHost) alert("The host has closed this room.");
         return clearSession();
       }
 
       playersCache = data.players || {};
+      currentPhase = data.gameState?.phase || "LOBBY";
 
-      currentPhase =
-        data.gameState?.phase || "LOBBY";
-
-      if (isHost) {
-        updateHostUI(data);
-      } else {
-        updatePlayerUI(data);
-      }
+      if (isHost) updateHostUI(data);
+      else updatePlayerUI(data);
     },
-    (error) => {
-      console.error("Room listener error:", error);
-    }
+    (error) => console.error("Room listener error:", error)
   );
 }
 
@@ -325,52 +264,30 @@ function listenToRoom(roomCode) {
 // =========================================================
 
 function playPhaseAudio(phase) {
-
-  if (!isHost) {
-    return;
-  }
-
+  if (!isHost) return;
   const night = el("audio-night");
   const dawn = el("audio-dawn");
   const day = el("audio-day");
 
-  if (!night || !dawn || !day) {
-    return;
-  }
+  if (!night || !dawn || !day) return;
 
   night.pause();
   dawn.pause();
   day.pause();
 
   try {
-
     if (phase === "NIGHT") {
-
       night.currentTime = 0;
       night.play();
-
     } else if (phase === "DAWN") {
-
       dawn.currentTime = 0;
       dawn.play();
-
-    } else if (
-      phase === "DAY_VOTE" ||
-      phase === "LOBBY"
-    ) {
-
+    } else if (phase === "DAY_VOTE" || phase === "LOBBY") {
       day.currentTime = 0;
       day.play();
-
     }
-
   } catch (error) {
-
-    console.log(
-      "Audio play blocked by browser:",
-      error
-    );
-
+    console.log("Audio play blocked by browser:", error);
   }
 }
 
@@ -379,317 +296,123 @@ function playPhaseAudio(phase) {
 // =========================================================
 
 function updateHostUI(data) {
+  el("host-phase").innerText = data.gameState.phase;
+  el("host-announcements").innerText = data.logs?.announcement || "";
 
-  el("host-phase").innerText =
-    data.gameState.phase;
-
-  el("host-announcements").innerText =
-    data.logs?.announcement || "";
-
-  // -----------------------------------------
-  // Phase audio
-  // -----------------------------------------
-
-  if (
-    data.gameState.phase !== previousPhase
-  ) {
-
-    previousPhase =
-      data.gameState.phase;
-
-    playPhaseAudio(
-      data.gameState.phase
-    );
+  if (data.gameState.phase !== previousPhase) {
+    previousPhase = data.gameState.phase;
+    playPhaseAudio(data.gameState.phase);
   }
-
-  // -----------------------------------------
-  // Determine action completion
-  // -----------------------------------------
 
   let aliveCount = 0;
   let allNightActionsDone = true;
   let allDayVotesDone = true;
-
-  let activeMafiaCount = 0;
-  Object.values(playersCache).forEach(p => {
-    if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) {
-      activeMafiaCount++;
-    }
-  });
+  let activeMafiaCount = getActiveMafiaCount(playersCache);
 
   el("host-alive-list").innerHTML = "";
   el("host-dead-list").innerHTML = "";
 
-  Object.entries(playersCache).forEach(
-    ([id, p]) => {
+  Object.entries(playersCache).forEach(([id, p]) => {
+    const li = document.createElement("li");
+    li.style.display = "flex";
+    li.style.justifyContent = "space-between";
+    li.style.alignItems = "center";
 
-      const li =
-        document.createElement("li");
+    const textSpan = document.createElement("span");
+    textSpan.innerText = p.name;
+    li.appendChild(textSpan);
 
-      li.style.display = "flex";
-      li.style.justifyContent = "space-between";
-      li.style.alignItems = "center";
+    const kickBtn = document.createElement("button");
+    kickBtn.innerText = "KICK";
+    kickBtn.style.padding = "4px 8px";
+    kickBtn.style.width = "auto";
+    kickBtn.style.fontSize = "0.7rem";
 
-      const textSpan =
-        document.createElement("span");
-
-      textSpan.innerText = p.name;
-
-      li.appendChild(textSpan);
-
-      // -------------------------------------
-      // Kick button
-      // -------------------------------------
-
-      const kickBtn =
-        document.createElement("button");
-
-      kickBtn.innerText = "KICK";
-
-      kickBtn.style.padding = "4px 8px";
-      kickBtn.style.width = "auto";
-      kickBtn.style.fontSize = "0.7rem";
-
-      kickBtn.onclick = async () => {
-
-        if (
-          confirm(
-            `Are you sure you want to remove ${p.name} from the game?`
-          )
-        ) {
-
-          try {
-
-            await set(
-              ref(
-                db,
-                `rooms/${myRoomCode}/players/${id}`
-              ),
-              null
-            );
-
-          } catch (error) {
-
-            console.error(
-              "Kick failed:",
-              error
-            );
-
-          }
+    kickBtn.onclick = async () => {
+      if (confirm(`Are you sure you want to remove ${p.name} from the game?`)) {
+        try {
+          await set(ref(db, `rooms/${myRoomCode}/players/${id}`), null);
+        } catch (error) {
+          console.error("Kick failed:", error);
         }
-      };
+      }
+    };
+    li.appendChild(kickBtn);
 
-      li.appendChild(kickBtn);
+    if (p.isAlive) {
+      aliveCount++;
+      el("host-alive-list").appendChild(li);
 
-      // -------------------------------------
-      // Alive / dead
-      // -------------------------------------
-
-      if (p.isAlive) {
-
-        aliveCount++;
-
-        el("host-alive-list")
-          .appendChild(li);
-
-        const isMafiaTeam = (p.role === "Mafia" || p.role === "Silent Mafia");
-        const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
-        
-        if (p.pendingRecruitment && activeMafiaCount === 0 && !p.nightTarget) {
-          allNightActionsDone = false;
-        } else if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && p.perks?.abilityUsed)) {
-          allNightActionsDone = false;
-        }
-
-        if (!p.voteTarget) {
-          allDayVotesDone = false;
-        }
-
-      } else {
-
-        el("host-dead-list")
-          .appendChild(li);
-
+      const pPerks = p.perks || { abilityUsed: false, bulletUsed: false };
+      const isMafiaTeam = (p.role === "Mafia" || p.role === "Silent Mafia");
+      const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
+      
+      if (p.pendingRecruitment && activeMafiaCount === 0 && !p.nightTarget) {
+        allNightActionsDone = false;
+      } else if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && pPerks.abilityUsed)) {
+        allNightActionsDone = false;
       }
 
+      if (!p.voteTarget) allDayVotesDone = false;
+
+    } else {
+      el("host-dead-list").appendChild(li);
     }
-  );
+  });
 
-  el("host-alive-count").innerText =
-    aliveCount;
+  el("host-alive-count").innerText = aliveCount;
 
-  const btnStart =
-    el("btn-start-game");
+  const btnStart = el("btn-start-game");
+  const btnAdvance = el("btn-advance-phase");
 
-  const btnAdvance =
-    el("btn-advance-phase");
-
-  // -----------------------------------------
-  // Lobby buttons
-  // -----------------------------------------
-
-  if (
-    data.gameState.phase === "LOBBY"
-  ) {
-
+  if (data.gameState.phase === "LOBBY") {
     btnStart.classList.remove("hidden");
     btnAdvance.classList.add("hidden");
-
   } else {
-
     btnStart.classList.add("hidden");
     btnAdvance.classList.remove("hidden");
   }
 
-  // -----------------------------------------
-  // AUTO ADVANCE - NIGHT
-  // -----------------------------------------
-
-  if (
-    data.gameState.phase === "NIGHT" &&
-    aliveCount > 0 &&
-    allNightActionsDone &&
-    !isAdvancing &&
-    !phaseTransitionInProgress
-  ) {
-
+  if (data.gameState.phase === "NIGHT" && aliveCount > 0 && allNightActionsDone && !isAdvancing && !phaseTransitionInProgress) {
     isAdvancing = true;
-
-    setTimeout(
-      async () => {
-
-        try {
-
-          if (currentPhase === "NIGHT") {
-
-            phaseTransitionInProgress =
-              true;
-
-            await advancePhase("DAWN");
-          }
-
-        } catch (error) {
-
-          console.error(
-            "Night auto advance failed:",
-            error
-          );
-
-        } finally {
-
-          phaseTransitionInProgress =
-            false;
-
-          isAdvancing = false;
+    setTimeout(async () => {
+      try {
+        if (currentPhase === "NIGHT") {
+          phaseTransitionInProgress = true;
+          await advancePhase("DAWN");
         }
-
-      },
-      1500
-    );
-  }
-
-  // -----------------------------------------
-  // AUTO ADVANCE - DAY VOTE
-  // -----------------------------------------
-
-  else if (
-    data.gameState.phase === "DAY_VOTE" &&
-    aliveCount > 0 &&
-    allDayVotesDone &&
-    !isAdvancing &&
-    !phaseTransitionInProgress
-  ) {
-
+      } catch (error) { console.error("Night auto advance failed:", error); } 
+      finally { phaseTransitionInProgress = false; isAdvancing = false; }
+    }, 1500);
+  } else if (data.gameState.phase === "DAY_VOTE" && aliveCount > 0 && allDayVotesDone && !isAdvancing && !phaseTransitionInProgress) {
     isAdvancing = true;
-
-    setTimeout(
-      async () => {
-
-        try {
-
-          if (
-            currentPhase === "DAY_VOTE"
-          ) {
-
-            phaseTransitionInProgress =
-              true;
-
-            await advancePhase("NIGHT");
-          }
-
-        } catch (error) {
-
-          console.error(
-            "Day vote auto advance failed:",
-            error
-          );
-
-        } finally {
-
-          phaseTransitionInProgress =
-            false;
-
-          isAdvancing = false;
+    setTimeout(async () => {
+      try {
+        if (currentPhase === "DAY_VOTE") {
+          phaseTransitionInProgress = true;
+          await advancePhase("NIGHT");
         }
-
-      },
-      1500
-    );
+      } catch (error) { console.error("Day vote auto advance failed:", error); } 
+      finally { phaseTransitionInProgress = false; isAdvancing = false; }
+    }, 1500);
   }
-
-  // -----------------------------------------
-  // Winner
-  // -----------------------------------------
 
   if (data.gameState.winner) {
-
     btnAdvance.disabled = true;
-
     return;
   }
 
   btnAdvance.disabled = false;
+  const phaseFlow = { LOBBY: "NIGHT", NIGHT: "DAWN", DAWN: "DAY_VOTE", DAY_VOTE: "NIGHT" };
+  const nextPhase = phaseFlow[currentPhase] || "NIGHT";
 
-  // -----------------------------------------
-  // Manual phase flow
-  // -----------------------------------------
-
-  const phaseFlow = {
-    LOBBY: "NIGHT",
-    NIGHT: "DAWN",
-    DAWN: "DAY_VOTE",
-    DAY_VOTE: "NIGHT"
-  };
-
-  const nextPhase =
-    phaseFlow[currentPhase] || "NIGHT";
-
-  btnAdvance.innerText =
-    `Advance to ${nextPhase}`;
-
+  btnAdvance.innerText = `Advance to ${nextPhase}`;
   btnAdvance.onclick = async () => {
-
-    if (phaseTransitionInProgress) {
-      return;
-    }
-
+    if (phaseTransitionInProgress) return;
     phaseTransitionInProgress = true;
-
-    try {
-
-      await advancePhase(nextPhase);
-
-    } catch (error) {
-
-      console.error(
-        "Manual phase advance failed:",
-        error
-      );
-
-    } finally {
-
-      phaseTransitionInProgress = false;
-    }
+    try { await advancePhase(nextPhase); } 
+    catch (error) { console.error("Manual phase advance failed:", error); } 
+    finally { phaseTransitionInProgress = false; }
   };
 }
 
@@ -698,120 +421,35 @@ function updateHostUI(data) {
 // =========================================================
 
 el("btn-start-game").onclick = async () => {
+  const pKeys = Object.keys(playersCache);
+  if (pKeys.length < 6 || pKeys.length > 9) return alert("Need 6 to 9 players.");
 
-  const pKeys =
-    Object.keys(playersCache);
-
-  if (
-    pKeys.length < 6 ||
-    pKeys.length > 9
-  ) {
-
-    return alert(
-      "Need 6 to 9 players."
-    );
-  }
-
-  let pool = [
-    "Fool",
-    "Doctor",
-    "Detective",
-    "Jailor",
-    "Reviver",
-    "Lookout",
-    "Mayor",
-    "Snatcher",
-    "Villager"
-  ];
-
-  pool = pool
-    .sort(() => 0.5 - Math.random())
-    .slice(
-      0,
-      pKeys.length - 2
-    );
-
-  pool.push("Mafia");
-  pool.push("Farmer");
-
-  pool = pool.sort(
-    () => 0.5 - Math.random()
-  );
+  let pool = ["Fool", "Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Mayor", "Villager"];
+  pool = pool.sort(() => 0.5 - Math.random()).slice(0, pKeys.length - 2);
+  pool.push("Mafia", "Farmer");
+  pool = pool.sort(() => 0.5 - Math.random());
 
   const updates = {};
+  pKeys.forEach((key, i) => {
+    updates[`rooms/${myRoomCode}/players/${key}/role`] = pool[i];
+    updates[`rooms/${myRoomCode}/players/${key}/isAlive`] = true;
+    updates[`rooms/${myRoomCode}/players/${key}/nightTarget`] = null;
+    updates[`rooms/${myRoomCode}/players/${key}/recruitTarget`] = null;
+    updates[`rooms/${myRoomCode}/players/${key}/voteTarget`] = null;
+    updates[`rooms/${myRoomCode}/players/${key}/pendingRecruitment`] = false;
+    updates[`rooms/${myRoomCode}/players/${key}/wasRecruited`] = false;
+    updates[`rooms/${myRoomCode}/players/${key}/privateLogs`] = [];
+    updates[`rooms/${myRoomCode}/players/${key}/perks`] = { bulletUsed: false, abilityUsed: false };
+  });
 
-  pKeys.forEach(
-    (key, i) => {
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/role`
-      ] = pool[i];
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/isAlive`
-      ] = true;
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/nightTarget`
-      ] = null;
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/recruitTarget`
-      ] = null;
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/voteTarget`
-      ] = null;
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/pendingRecruitment`
-      ] = false;
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/wasRecruited`
-      ] = false;
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/privateLogs`
-      ] = [];
-
-      updates[
-        `rooms/${myRoomCode}/players/${key}/perks`
-      ] = {
-        bulletUsed: false,
-        abilityUsed: false
-      };
-
-    }
-  );
-
-  updates[
-    `rooms/${myRoomCode}/gameState/phase`
-  ] = "NIGHT";
-
-  updates[
-    `rooms/${myRoomCode}/gameState/winner`
-  ] = null;
-
-  updates[
-    `rooms/${myRoomCode}/logs/announcement`
-  ] =
-    "Night falls. Check your devices.";
+  updates[`rooms/${myRoomCode}/gameState/phase`] = "NIGHT";
+  updates[`rooms/${myRoomCode}/gameState/winner`] = null;
+  updates[`rooms/${myRoomCode}/logs/announcement`] = "Night falls. Check your devices.";
 
   try {
-
-    await update(
-      ref(db),
-      updates
-    );
-
+    await update(ref(db), updates);
   } catch (error) {
-
-    console.error(
-      "Start game failed:",
-      error
-    );
-
+    console.error("Start game failed:", error);
     alert("Could not start game.");
   }
 };
@@ -821,58 +459,27 @@ el("btn-start-game").onclick = async () => {
 // =========================================================
 
 async function advancePhase(nextPhase) {
-
-  if (!nextPhase) {
-    return;
-  }
-
-  const updates = {
-    [`rooms/${myRoomCode}/gameState/phase`]:
-      nextPhase
-  };
-
-  // =======================================================
-  // NIGHT -> DAWN
-  // =======================================================
+  if (!nextPhase) return;
+  const updates = { [`rooms/${myRoomCode}/gameState/phase`]: nextPhase };
 
   if (nextPhase === "DAWN") {
-
     let actions = {};
     let deaths = [];
     let logs = {};
 
     const addLog = (id, msg) => {
-
-      if (!logs[id]) {
-        logs[id] = [];
-      }
-
+      if (!logs[id]) logs[id] = [];
       logs[id].push(msg);
     };
 
     let revivedName = "";
     let revivedId = null;
 
-    // -----------------------------------------
-    // Collect actions
-    // -----------------------------------------
-
-    Object.entries(playersCache).forEach(
-      ([id, p]) => {
-
-        if (
-          p.isAlive &&
-          p.nightTarget &&
-          p.nightTarget !== "sleep"
-        ) {
-
-          actions[p.role] = {
-            actor: id,
-            target: p.nightTarget
-          };
-        }
+    Object.entries(playersCache).forEach(([id, p]) => {
+      if (p.isAlive && p.nightTarget && p.nightTarget !== "sleep") {
+        actions[p.role] = { actor: id, target: p.nightTarget };
       }
-    );
+    });
 
     let mafiaKills = [];
     let mafiaRecruits = [];
@@ -883,95 +490,43 @@ async function advancePhase(nextPhase) {
         if ((p.role === "Mafia" || p.role === "Silent Mafia") && p.nightTarget && p.nightTarget !== "sleep") {
           mafiaKills.push({ actor: id, target: p.nightTarget });
         }
-        
         if (p.role === "Mafia" && !p.wasRecruited && p.recruitTarget && p.recruitTarget !== "none") {
           mafiaRecruits.push({ actor: id, target: p.recruitTarget });
         }
-        
         if (p.role === "Farmer" && p.nightTarget && p.nightTarget !== "sleep") {
           farmerFrames.push({ actor: id, target: p.nightTarget });
         }
       }
     });
 
-    // -----------------------------------------
-    // Doctor / Bodyguard
-    // -----------------------------------------
-
-    const docTarget =
-      actions["Doctor"]
-        ? actions["Doctor"].target
-        : null;
-
-    const bgTarget =
-      actions["Bodyguard"]
-        ? actions["Bodyguard"].target
-        : null;
-
-    // -----------------------------------------
-    // Jailor
-    // -----------------------------------------
+    const docTarget = actions["Doctor"] ? actions["Doctor"].target : null;
+    const bgTarget = actions["Bodyguard"] ? actions["Bodyguard"].target : null;
 
     if (actions["Jailor"]) {
-
-      const target =
-        actions["Jailor"].target;
-
+      const target = actions["Jailor"].target;
       if (target !== docTarget) {
-
-        if (playersCache[target]) {
-          deaths.push(target);
-        }
+        if (playersCache[target]) deaths.push(target);
       }
-
-      updates[
-        `rooms/${myRoomCode}/players/${actions["Jailor"].actor}/perks/bulletUsed`
-      ] = true;
+      updates[`rooms/${myRoomCode}/players/${actions["Jailor"].actor}/perks/bulletUsed`] = true;
     }
 
-    // -----------------------------------------
-    // Farmer Frame Resolution
-    // -----------------------------------------
-    let framedPlayerId = null;
-    if (farmerFrames.length > 0) {
-      framedPlayerId = farmerFrames[0].target;
-    }
-
-    // -----------------------------------------
-    // Mafia Single Kill & Recruitment Resolution
-    // -----------------------------------------
-    let finalMafiaKillTarget = null;
-    if (mafiaKills.length > 0) {
-      finalMafiaKillTarget = mafiaKills[0].target;
-    }
+    let framedPlayerId = farmerFrames.length > 0 ? farmerFrames[0].target : null;
+    let finalMafiaKillTarget = mafiaKills.length > 0 ? mafiaKills[0].target : null;
 
     if (finalMafiaKillTarget) {
       const target = finalMafiaKillTarget;
-
-      if (target === docTarget) {
-        // Protected by doctor
-      } else if (target === bgTarget) {
-        const bodyguardId = actions["Bodyguard"] ? actions["Bodyguard"].actor : null;
-        if (bodyguardId && docTarget !== bodyguardId) {
-          if (playersCache[bodyguardId]) {
-            deaths.push(bodyguardId);
-          }
-        }
-      } else {
-        if (playersCache[target]) {
-          deaths.push(target);
+      if (target !== docTarget) {
+        if (target === bgTarget) {
+          const bodyguardId = actions["Bodyguard"] ? actions["Bodyguard"].actor : null;
+          if (bodyguardId && docTarget !== bodyguardId && playersCache[bodyguardId]) deaths.push(bodyguardId);
+        } else {
+          if (playersCache[target]) deaths.push(target);
         }
       }
     }
 
     if (mafiaRecruits.length > 0) {
-      let livingMafiaCount = 0;
-      Object.values(playersCache).forEach(p => {
-        if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) {
-          livingMafiaCount++;
-        }
-      });
-
+      let livingMafiaCount = getActiveMafiaCount(playersCache);
       if (livingMafiaCount < 2) {
         const recruitTargetId = mafiaRecruits[0].target;
         if (playersCache[recruitTargetId] && playersCache[recruitTargetId].isAlive && playersCache[recruitTargetId].role !== "Farmer") {
@@ -981,427 +536,128 @@ async function advancePhase(nextPhase) {
       }
     }
 
-    // -----------------------------------------
-    // Detective
-    // -----------------------------------------
-
     if (actions["Detective"]) {
-
-      const target =
-        actions["Detective"].target;
-
+      const target = actions["Detective"].target;
       if (playersCache[target]) {
-
         let isMafia = playersCache[target].role === "Mafia" || playersCache[target].role === "Silent Mafia";
-        if (target === framedPlayerId) {
-          isMafia = true;
-        }
-
-        addLog(
-          actions["Detective"].actor,
-          `${playersCache[target].name} is ${
-            isMafia
-              ? "MAFIA"
-              : "NOT MAFIA"
-          }.`
-        );
+        if (target === framedPlayerId) isMafia = true;
+        addLog(actions["Detective"].actor, `${playersCache[target].name} is ${isMafia ? "MAFIA" : "NOT MAFIA"}.`);
       }
     }
-
-    // -----------------------------------------
-    // Lookout
-    // -----------------------------------------
 
     if (actions["Lookout"]) {
-
-      const target =
-        actions["Lookout"].target;
-
+      const target = actions["Lookout"].target;
       let visitors = 0;
-
-      Object.values(actions).forEach(
-        (action) => {
-
-          if (
-            action.target === target
-          ) {
-            visitors++;
-          }
-
-        }
-      );
-
+      Object.values(actions).forEach((action) => { if (action.target === target) visitors++; });
       mafiaKills.forEach(k => { if (k.target === target) visitors++; });
       farmerFrames.forEach(f => { if (f.target === target) visitors++; });
-
-      if (playersCache[target]) {
-
-        addLog(
-          actions["Lookout"].actor,
-          `${visitors} people visited ${playersCache[target].name}.`
-        );
-      }
+      if (playersCache[target]) addLog(actions["Lookout"].actor, `${visitors} people visited ${playersCache[target].name}.`);
     }
-
-    // -----------------------------------------
-    // Snatcher
-    // -----------------------------------------
 
     if (actions["Snatcher"]) {
-
-      const snatcherId =
-        actions["Snatcher"].actor;
-
+      const snatcherId = actions["Snatcher"].actor;
       if (!deaths.includes(snatcherId)) {
-
-        const target =
-          actions["Snatcher"].target;
-
-        if (
-          target &&
-          playersCache[target] &&
-          playersCache[target].isAlive &&
-          target !== snatcherId
-        ) {
-
-          const targetRole =
-            playersCache[target].role;
-
-          updates[
-            `rooms/${myRoomCode}/players/${snatcherId}/role`
-          ] = targetRole;
-
-          updates[
-            `rooms/${myRoomCode}/players/${target}/role`
-          ] = "Villager";
-
-          updates[
-            `rooms/${myRoomCode}/players/${snatcherId}/perks/abilityUsed`
-          ] = true;
-
-          addLog(
-            snatcherId,
-            `You snatched a role! You are now the ${targetRole}.`
-          );
-
-          addLog(
-            target,
-            `Your role was snatched! You are now a Villager.`
-          );
+        const target = actions["Snatcher"].target;
+        if (target && playersCache[target] && playersCache[target].isAlive && target !== snatcherId) {
+          const targetRole = playersCache[target].role;
+          updates[`rooms/${myRoomCode}/players/${snatcherId}/role`] = targetRole;
+          updates[`rooms/${myRoomCode}/players/${target}/role`] = "Villager";
+          updates[`rooms/${myRoomCode}/players/${snatcherId}/perks/abilityUsed`] = true;
+          addLog(snatcherId, `You snatched a role! You are now the ${targetRole}.`);
+          addLog(target, `Your role was snatched! You are now a Villager.`);
         }
       }
     }
-
-    // -----------------------------------------
-    // Reviver
-    // -----------------------------------------
 
     if (actions["Reviver"]) {
-
-      const targetId =
-        actions["Reviver"].target;
-
-      const reviverId =
-        actions["Reviver"].actor;
-
-      if (
-        targetId &&
-        playersCache[targetId] &&
-        !playersCache[targetId].isAlive &&
-        targetId !== reviverId
-      ) {
-
+      const targetId = actions["Reviver"].target;
+      const reviverId = actions["Reviver"].actor;
+      if (targetId && playersCache[targetId] && !playersCache[targetId].isAlive && targetId !== reviverId) {
         revivedId = targetId;
-
-        revivedName =
-          playersCache[targetId].name;
-
-        updates[
-          `rooms/${myRoomCode}/players/${targetId}/isAlive`
-        ] = true;
-
-        updates[
-          `rooms/${myRoomCode}/players/${targetId}/nightTarget`
-        ] = null;
-
-        updates[
-          `rooms/${myRoomCode}/players/${targetId}/voteTarget`
-        ] = null;
-
-        if (playersCache[targetId].wasRecruited) {
-          updates[`rooms/${myRoomCode}/players/${targetId}/role`] = "Silent Mafia";
-        }
-
-        updates[
-          `rooms/${myRoomCode}/players/${reviverId}/perks/abilityUsed`
-        ] = true;
+        revivedName = playersCache[targetId].name;
+        updates[`rooms/${myRoomCode}/players/${targetId}/isAlive`] = true;
+        updates[`rooms/${myRoomCode}/players/${targetId}/nightTarget`] = null;
+        updates[`rooms/${myRoomCode}/players/${targetId}/voteTarget`] = null;
+        if (playersCache[targetId].wasRecruited) updates[`rooms/${myRoomCode}/players/${targetId}/role`] = "Silent Mafia";
+        updates[`rooms/${myRoomCode}/players/${reviverId}/perks/abilityUsed`] = true;
       }
     }
 
-    // -----------------------------------------
-    // Apply deaths
-    // -----------------------------------------
-
-    const uniqueDeaths =
-      [...new Set(deaths)];
-
-    uniqueDeaths.forEach(
-      (dId) => {
-
-        if (dId === revivedId) {
-          return;
-        }
-
-        if (playersCache[dId]) {
-
-          updates[
-            `rooms/${myRoomCode}/players/${dId}/isAlive`
-          ] = false;
-        }
+    const uniqueDeaths = [...new Set(deaths)];
+    uniqueDeaths.forEach((dId) => {
+      if (dId !== revivedId && playersCache[dId]) {
+        updates[`rooms/${myRoomCode}/players/${dId}/isAlive`] = false;
       }
-    );
+    });
 
-    // -----------------------------------------
-    // Private logs
-    // -----------------------------------------
+    Object.entries(logs).forEach(([id, msgArray]) => {
+      updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = msgArray;
+    });
 
-    Object.entries(logs).forEach(
-      ([id, msgArray]) => {
+    const actualDeaths = uniqueDeaths.filter((id) => id !== revivedId);
+    const deadNames = actualDeaths.filter((id) => playersCache[id]).map((id) => playersCache[id].name).join(", ");
+    let finalAnnounce = deadNames ? `The village wakes to find ${deadNames} murdered.` : "The village wakes peacefully. No one died.";
+    if (revivedName) finalAnnounce += ` By a miracle, ${revivedName} was revived from the dead!`;
+    
+    updates[`rooms/${myRoomCode}/logs/announcement`] = finalAnnounce;
 
-        updates[
-          `rooms/${myRoomCode}/players/${id}/privateLogs`
-        ] = msgArray;
-      }
-    );
-
-    // -----------------------------------------
-    // Dawn announcement
-    // -----------------------------------------
-
-    const actualDeaths =
-      uniqueDeaths.filter(
-        (id) => id !== revivedId
-      );
-
-    const deadNames =
-      actualDeaths
-        .filter(
-          (id) => playersCache[id]
-        )
-        .map(
-          (id) => playersCache[id].name
-        )
-        .join(", ");
-
-    let finalAnnounce;
-
-    if (deadNames) {
-
-      finalAnnounce =
-        `The village wakes to find ${deadNames} murdered.`;
-
-    } else {
-
-      finalAnnounce =
-        "The village wakes peacefully. No one died.";
-    }
-
-    if (revivedName) {
-
-      finalAnnounce +=
-        ` By a miracle, ${revivedName} was revived from the dead!`;
-    }
-
-    updates[
-      `rooms/${myRoomCode}/logs/announcement`
-    ] = finalAnnounce;
-
-    // -----------------------------------------
-    // Clear night targets
-    // -----------------------------------------
-
-    Object.keys(playersCache).forEach(
-      (id) => {
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/nightTarget`
-        ] = null;
-        updates[
-          `rooms/${myRoomCode}/players/${id}/recruitTarget`
-        ] = null;
-      }
-    );
+    Object.keys(playersCache).forEach((id) => {
+      updates[`rooms/${myRoomCode}/players/${id}/nightTarget`] = null;
+      updates[`rooms/${myRoomCode}/players/${id}/recruitTarget`] = null;
+    });
   }
-
-  // =======================================================
-  // DAY VOTE -> NIGHT
-  // =======================================================
 
   if (nextPhase === "NIGHT") {
+    let votes = {};
+    let skipVotes = 0;
 
-  let votes = {};
-  let skipVotes = 0;
-
-  Object.values(playersCache).forEach(
-    (p) => {
-
-      if (
-        !p.isAlive ||
-        !p.voteTarget
-      ) {
-        return;
+    Object.values(playersCache).forEach((p) => {
+      if (!p.isAlive || !p.voteTarget) return;
+      const weight = p.role === "Mayor" ? 2 : 1;
+      if (p.voteTarget === "skip") skipVotes += weight;
+      else if (playersCache[p.voteTarget] && playersCache[p.voteTarget].isAlive) {
+        votes[p.voteTarget] = (votes[p.voteTarget] || 0) + weight;
       }
+    });
 
-      const weight =
-        p.role === "Mayor"
-          ? 2
-          : 1;
-
-      if (p.voteTarget === "skip") {
-
-        skipVotes += weight;
-
-      } else {
-
-        const target =
-          playersCache[p.voteTarget];
-
-        if (
-          target &&
-          target.isAlive
-        ) {
-          votes[p.voteTarget] =
-            (votes[p.voteTarget] || 0) +
-            weight;
-        }
-      }
-    }
-  );
-
-  let maxPlayerVotes = 0;
-  let leaders = [];
-
-  Object.entries(votes).forEach(
-    ([target, voteCount]) => {
-
-      if (
-        voteCount > maxPlayerVotes
-      ) {
+    let maxPlayerVotes = 0;
+    let leaders = [];
+    Object.entries(votes).forEach(([target, voteCount]) => {
+      if (voteCount > maxPlayerVotes) {
         maxPlayerVotes = voteCount;
         leaders = [target];
-
-      } else if (
-        voteCount === maxPlayerVotes &&
-        voteCount > 0
-      ) {
+      } else if (voteCount === maxPlayerVotes && voteCount > 0) {
         leaders.push(target);
       }
-    }
-  );
+    });
 
-  let executed = null;
+    let executed = (leaders.length === 1 && maxPlayerVotes > skipVotes) ? leaders[0] : null;
 
-  if (
-    leaders.length === 1 &&
-    maxPlayerVotes > skipVotes
-  ) {
-    executed = leaders[0];
-  }
-
-  if (
-    executed &&
-    playersCache[executed] &&
-    playersCache[executed].isAlive
-  ) {
-
-    updates[
-      `rooms/${myRoomCode}/players/${executed}/isAlive`
-    ] = false;
-
-    updates[
-      `rooms/${myRoomCode}/logs/announcement`
-    ] =
-      `${playersCache[executed].name} was voted out.`;
-
-    if (
-      playersCache[executed].role === "Fool"
-    ) {
-      updates[
-        `rooms/${myRoomCode}/gameState/winner`
-      ] = "FOOL";
-    }
-
-  } else {
-
-    let reason = "";
-
-    if (
-      skipVotes > maxPlayerVotes &&
-      skipVotes > 0
-    ) {
-      reason = "Skip received the majority.";
-
-    } else if (
-      skipVotes === maxPlayerVotes &&
-      skipVotes > 0
-    ) {
-      reason = "Skip tied for the highest vote.";
-
-    } else if (
-      leaders.length > 1
-    ) {
-      reason = "The vote was tied.";
-
+    if (executed && playersCache[executed] && playersCache[executed].isAlive) {
+      updates[`rooms/${myRoomCode}/players/${executed}/isAlive`] = false;
+      updates[`rooms/${myRoomCode}/logs/announcement`] = `${playersCache[executed].name} was voted out.`;
+      if (playersCache[executed].role === "Fool") updates[`rooms/${myRoomCode}/gameState/winner`] = "FOOL";
     } else {
-      reason = "Nobody received enough votes.";
+      let reason = "Nobody received enough votes.";
+      if (skipVotes > maxPlayerVotes && skipVotes > 0) reason = "Skip received the majority.";
+      else if (skipVotes === maxPlayerVotes && skipVotes > 0) reason = "Skip tied for the highest vote.";
+      else if (leaders.length > 1) reason = "The vote was tied.";
+      updates[`rooms/${myRoomCode}/logs/announcement`] = `${reason} Nobody was executed.`;
     }
 
-    updates[
-      `rooms/${myRoomCode}/logs/announcement`
-    ] =
-      `${reason} Nobody was executed.`;
+    Object.keys(playersCache).forEach((id) => {
+      updates[`rooms/${myRoomCode}/players/${id}/voteTarget`] = null;
+    });
   }
-
-  Object.keys(playersCache).forEach(
-    (id) => {
-      updates[
-        `rooms/${myRoomCode}/players/${id}/voteTarget`
-      ] = null;
-    }
-  );
-}
-  // =======================================================
-  // SAVE
-  // =======================================================
 
   try {
-
-    await update(
-      ref(db),
-      updates
-    );
-
+    await update(ref(db), updates);
   } catch (error) {
-
-    console.error(
-      "Phase update failed:",
-      error
-    );
-
+    console.error("Phase update failed:", error);
     throw error;
   }
 
-  // =======================================================
-  // CHECK WIN CONDITION
-  // =======================================================
-
-  if (
-    nextPhase === "DAWN" ||
-    nextPhase === "NIGHT"
-  ) {
-
-    await checkWinCondition();
-  }
+  if (nextPhase === "DAWN" || nextPhase === "NIGHT") await checkWinCondition();
 }
 
 // =========================================================
@@ -1409,96 +665,35 @@ async function advancePhase(nextPhase) {
 // =========================================================
 
 async function checkWinCondition() {
-
   try {
-
-    const snap =
-      await get(
-        ref(db, `rooms/${myRoomCode}`)
-      );
-
-    if (!snap.exists()) {
-      return;
-    }
+    const snap = await get(ref(db, `rooms/${myRoomCode}`));
+    if (!snap.exists()) return;
 
     const data = snap.val();
+    if (data.gameState.winner) return;
 
-    if (data.gameState.winner) {
-      return;
-    }
+    let aliveMafia = 0, aliveVillage = 0, pendingRecruits = 0;
 
-    let aliveMafia = 0;
-    let aliveVillage = 0;
-    let pendingRecruits = 0;
-
-    Object.values(
-      data.players || {}
-    ).forEach(
-      (p) => {
-
-        if (!p.isAlive) {
-          return;
-        }
-
-        if (
-          p.role === "Mafia" || p.role === "Silent Mafia"
-        ) {
-
-          aliveMafia++;
-
-        } else if (p.role !== "Fool") {
-
-          aliveVillage++;
-        }
-
-        if (p.pendingRecruitment) {
-            pendingRecruits++;
-        }
-      }
-    );
+    Object.values(data.players || {}).forEach((p) => {
+      if (!p.isAlive) return;
+      if (p.role === "Mafia" || p.role === "Silent Mafia") aliveMafia++;
+      else if (p.role !== "Fool") aliveVillage++;
+      if (p.pendingRecruitment) pendingRecruits++;
+    });
 
     let winner = null;
-
-    if (
-      aliveMafia === 0 && pendingRecruits === 0
-    ) {
-
-      winner = "VILLAGE";
-
-    } else if (
-      aliveMafia >= aliveVillage
-    ) {
-
-      winner = "MAFIA";
-    }
+    if (aliveMafia === 0 && pendingRecruits === 0) winner = "VILLAGE";
+    else if (aliveMafia >= aliveVillage) winner = "MAFIA";
 
     if (winner) {
-
-      await update(
-        ref(db),
-        {
-
-          [`rooms/${myRoomCode}/gameState/winner`]:
-            winner,
-
-          [`rooms/${myRoomCode}/gameState/phase`]:
-            "GAME_OVER",
-
-          [`rooms/${myRoomCode}/logs/announcement`]:
-            `${winner} WINS THE GAME!`
-        }
-      );
-
+      await update(ref(db), {
+        [`rooms/${myRoomCode}/gameState/winner`]: winner,
+        [`rooms/${myRoomCode}/gameState/phase`]: "GAME_OVER",
+        [`rooms/${myRoomCode}/logs/announcement`]: `${winner} WINS THE GAME!`
+      });
       playPhaseAudio("LOBBY");
     }
-
-  } catch (error) {
-
-    console.error(
-      "Win condition check failed:",
-      error
-    );
-  }
+  } catch (error) { console.error("Win condition check failed:", error); }
 }
 
 // =========================================================
@@ -1506,70 +701,34 @@ async function checkWinCondition() {
 // =========================================================
 
 function updatePlayerUI(data) {
-
-  const me =
-    playersCache[myPlayerId];
-
+  const me = playersCache[myPlayerId];
   if (!me) {
-
-    alert(
-      "You have been removed from the room by the host."
-    );
-
+    alert("You have been removed from the room by the host.");
     clearSession();
-
     return;
   }
 
-  el("player-name-display").innerText =
-    me.name;
+  // Safety fallback for perks
+  const myPerks = me.perks || { bulletUsed: false, abilityUsed: false };
 
-  el("player-phase-display").innerText =
-    data.gameState.phase;
-
-  // -----------------------------------------
-  // Role
-  // -----------------------------------------
+  el("player-name-display").innerText = me.name;
+  el("player-phase-display").innerText = data.gameState.phase;
 
   if (me.role) {
-
-    myRoleData =
-      ROLES[me.role] || (me.role === "Silent Mafia" ? { team: "Mafia", desc: "You were recruited into the Mafia and revived as a silent member. You have no active night abilities.", win: "Reach parity with the living village." } : {});
-
+    myRoleData = ROLES[me.role] || (me.role === "Silent Mafia" ? { team: "Mafia", desc: "You were recruited into the Mafia and revived as a silent member. You have no active night abilities.", win: "Reach parity with the living village." } : {});
     if (myRoleData) {
-
-      el("role-name").innerText =
-        me.role;
-
-      el("role-desc").innerText =
-        myRoleData.desc;
-
-      el("role-win").innerText =
-        myRoleData.win;
+      el("role-name").innerText = me.role;
+      el("role-desc").innerText = myRoleData.desc;
+      el("role-win").innerText = myRoleData.win;
     }
   }
 
-  const select =
-    el("target-select");
-
-  const btn =
-    el("btn-submit-action");
-
-  const prompt =
-    el("action-prompt");
-
-  const feedback =
-    el("action-feedback");
-
-  const deadContainer =
-    el("player-dead-container");
-
-  const deadList =
-    el("player-dead-list");
-
-  // -----------------------------------------
-  // Reset UI
-  // -----------------------------------------
+  const select = el("target-select");
+  const btn = el("btn-submit-action");
+  const prompt = el("action-prompt");
+  const feedback = el("action-feedback");
+  const deadContainer = el("player-dead-container");
+  const deadList = el("player-dead-list");
 
   select.classList.add("hidden");
   btn.classList.add("hidden");
@@ -1580,70 +739,31 @@ function updatePlayerUI(data) {
   const existingRecruitPrompt = document.getElementById("recruit-prompt-container");
   if (existingRecruitPrompt) existingRecruitPrompt.remove();
 
-  // -----------------------------------------
-  // Dead players
-  // -----------------------------------------
-
   deadList.innerHTML = "";
-
   let deadCount = 0;
 
-  Object.entries(playersCache).forEach(
-    ([id, p]) => {
-
-      if (!p.isAlive) {
-
-        deadCount++;
-
-        deadList.innerHTML +=
-          `<li>${p.name}</li>`;
-      }
+  Object.entries(playersCache).forEach(([id, p]) => {
+    if (!p.isAlive) {
+      deadCount++;
+      deadList.innerHTML += `<li>${p.name}</li>`;
     }
-  );
-
-  if (deadCount > 0) {
-
-    deadContainer.classList.remove(
-      "hidden"
-    );
-
-  } else {
-
-    deadContainer.classList.add(
-      "hidden"
-    );
-  }
-
-  // -----------------------------------------
-  // Dead player
-  // -----------------------------------------
-
-  if (!me.isAlive) {
-
-    prompt.innerText =
-      "You are DEAD. Please remain quiet.";
-
-    return;
-  }
-
-  // -----------------------------------------
-  // Game over
-  // -----------------------------------------
-
-  if (data.gameState.winner) {
-
-    prompt.innerText =
-      `Game Over. ${data.gameState.winner} wins.`;
-
-    return;
-  }
-
-  let activeMafiaCount = 0;
-  Object.values(playersCache).forEach(p => {
-    if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) activeMafiaCount++;
   });
 
-  if (data.gameState.phase === "NIGHT" && me.pendingRecruitment && activeMafiaCount === 0) {
+  deadContainer.classList.toggle("hidden", deadCount === 0);
+
+  if (!me.isAlive) {
+    prompt.innerText = "You are DEAD. Please remain quiet.";
+    return;
+  }
+
+  if (data.gameState.winner) {
+    prompt.innerText = `Game Over. ${data.gameState.winner} wins.`;
+    return;
+  }
+
+  let activeMafiaCount = getActiveMafiaCount(playersCache);
+
+  if (data.gameState.phase === "NIGHT" && me.pendingRecruitment && activeMafiaCount === 0 && me.role !== "Mafia" && me.role !== "Silent Mafia") {
     prompt.innerText = "The Mafia has fallen! They selected you to take their place. Will you join the Mafia?";
     
     const recruitContainer = document.createElement("div");
@@ -1654,19 +774,13 @@ function updatePlayerUI(data) {
     acceptBtn.innerText = "Accept";
     acceptBtn.style.marginRight = "10px";
     acceptBtn.onclick = async () => {
-      await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), {
-        role: "Mafia",
-        wasRecruited: true,
-        pendingRecruitment: false
-      });
+      await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), { role: "Mafia", wasRecruited: true, pendingRecruitment: false });
     };
 
     const declineBtn = document.createElement("button");
     declineBtn.innerText = "Decline";
     declineBtn.onclick = async () => {
-      await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), {
-        pendingRecruitment: false
-      });
+      await update(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), { pendingRecruitment: false });
     };
 
     recruitContainer.appendChild(acceptBtn);
@@ -1675,70 +789,31 @@ function updatePlayerUI(data) {
     return;
   }
 
-  // -----------------------------------------
-  // Target options
-  // -----------------------------------------
+  select.innerHTML = '<option value="">-- Select Target --</option>';
 
-  select.innerHTML =
-    '<option value="">-- Select Target --</option>';
-
-  Object.entries(playersCache).forEach(
-    ([id, p]) => {
-
-      if (data.gameState.phase === "NIGHT") {
-
-        if (
-          me.role === "Reviver" &&
-          !me.perks?.abilityUsed
-        ) {
-          if (!p.isAlive) {
-            select.innerHTML +=
-              `<option value="${id}">${p.name}</option>`;
-          }
-
-          return;
-        }
-
-        if (p.isAlive) {
-
-          if (
-            id !== myPlayerId ||
-            me.role === "Doctor"
-          ) {
-            const selfTag =
-              id === myPlayerId
-                ? " (Yourself)"
-                : "";
-
-            select.innerHTML +=
-              `<option value="${id}">${p.name}${selfTag}</option>`;
-          }
-        }
-
+  Object.entries(playersCache).forEach(([id, p]) => {
+    if (data.gameState.phase === "NIGHT") {
+      if (me.role === "Reviver" && !myPerks.abilityUsed) {
+        if (p.isAlive === false) select.innerHTML += `<option value="${id}">${p.name}</option>`;
         return;
       }
-
-      if (data.gameState.phase === "DAY_VOTE") {
-
-        if (
-          p.isAlive &&
-          id !== myPlayerId
-        ) {
-          select.innerHTML +=
-            `<option value="${id}">${p.name}</option>`;
+      if (p.isAlive) {
+        if (id !== myPlayerId || me.role === "Doctor") {
+          const selfTag = id === myPlayerId ? " (Yourself)" : "";
+          select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
         }
       }
+      return;
     }
-  );
 
-  // =======================================================
-  // NIGHT
-  // =======================================================
+    if (data.gameState.phase === "DAY_VOTE") {
+      if (p.isAlive && id !== myPlayerId) {
+        select.innerHTML += `<option value="${id}">${p.name}</option>`;
+      }
+    }
+  });
 
-  if (
-    data.gameState.phase === "NIGHT"
-  ) {
-
+  if (data.gameState.phase === "NIGHT") {
     let teamInfoText = "";
     if (me.role === "Mafia" || me.role === "Silent Mafia") {
       let partners = [];
@@ -1760,83 +835,25 @@ function updatePlayerUI(data) {
     }
 
     if (me.nightTarget) {
-
-      prompt.innerText =
-        `Action locked in. Waiting for others.${teamInfoText}`;
-    }
-
-    else if (
-
-      [
-        "Fool",
-        "Mayor",
-        "Villager",
-        "Silent Mafia"
-      ].includes(me.role)
-
-      ||
-
-      (
-        me.role === "Jailor" &&
-        me.perks?.bulletUsed
-      )
-
-      ||
-
-      (
-        me.role === "Snatcher" &&
-        me.perks?.abilityUsed
-      )
-
-      ||
-
-      (
-        me.role === "Reviver" &&
-        (
-          me.perks?.abilityUsed ||
-          deadCount === 0
-        )
-      )
-
-      ||
-
-      (
-        me.role === "Farmer" &&
-        me.perks?.abilityUsed
-      )
+      prompt.innerText = `Action locked in. Waiting for others.${teamInfoText}`;
+    } else if (
+      ["Fool", "Mayor", "Villager", "Silent Mafia"].includes(me.role) ||
+      (me.role === "Jailor" && myPerks.bulletUsed) ||
+      (me.role === "Snatcher" && myPerks.abilityUsed) ||
+      (me.role === "Reviver" && (myPerks.abilityUsed || deadCount === 0)) ||
+      (me.role === "Farmer" && myPerks.abilityUsed)
     ) {
-
-      prompt.innerText =
-        `You have no action tonight. Sleep.${teamInfoText}`;
-
-      btn.innerText =
-        "Go to Sleep";
-
-      btn.classList.remove(
-        "hidden"
-      );
-
-      btn.onclick = () => {
-
-        setAction(
-          "nightTarget",
-          "sleep"
-        );
-
-      };
-
-    }
-
-    else {
-
-      prompt.innerText =
-        (me.role === "Reviver"
-          ? "Choose a player to revive:"
-          : me.role === "Mafia"
-          ? "Choose your kill target:"
-          : me.role === "Farmer"
-          ? "Choose a player to frame:"
-          : "Choose your night target:") + teamInfoText;
+      prompt.innerText = `You have no action tonight. Sleep.${teamInfoText}`;
+      btn.innerText = "Go to Sleep";
+      btn.classList.remove("hidden");
+      btn.onclick = () => setAction("nightTarget", "sleep");
+    } else {
+      prompt.innerText = (
+        me.role === "Reviver" ? "Choose a player to revive:"
+        : me.role === "Mafia" ? "Choose your kill target:"
+        : me.role === "Farmer" ? "Choose a player to frame:"
+        : "Choose your night target:"
+      ) + teamInfoText;
 
       if (me.role === "Mafia") {
         let livingMafiaCount = 0;
@@ -1844,7 +861,7 @@ function updatePlayerUI(data) {
           if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) livingMafiaCount++;
         });
 
-        if (!me.perks?.abilityUsed && !me.wasRecruited && livingMafiaCount < 2) {
+        if (!myPerks.abilityUsed && !me.wasRecruited && livingMafiaCount < 2) {
           const recruitSelect = document.createElement("select");
           recruitSelect.id = "recruit-target-select";
           recruitSelect.innerHTML = '<option value="none">-- Optional: Recruit Player --</option>';
@@ -1857,35 +874,16 @@ function updatePlayerUI(data) {
         }
       }
 
-      if (
-        [
-          "Jailor",
-          "Snatcher",
-          "Reviver",
-          "Farmer"
-        ].includes(me.role)
-      ) {
-
-        select.innerHTML +=
-          `<option value="sleep">Skip / Sleep</option>`;
+      if (["Jailor", "Snatcher", "Reviver", "Farmer"].includes(me.role)) {
+        select.innerHTML += `<option value="sleep">Skip / Sleep</option>`;
       }
 
-      select.classList.remove(
-        "hidden"
-      );
-
-      btn.innerText =
-        "Confirm Action";
-
-      btn.classList.remove(
-        "hidden"
-      );
+      select.classList.remove("hidden");
+      btn.innerText = "Confirm Action";
+      btn.classList.remove("hidden");
 
       btn.onclick = async () => {
-
-        if (!select.value) {
-          return;
-        }
+        if (!select.value) return;
 
         if (me.role === "Mafia") {
           const recruitSel = document.getElementById("recruit-target-select");
@@ -1900,108 +898,37 @@ function updatePlayerUI(data) {
           await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/perks/abilityUsed`), true);
         }
 
-        setAction(
-          "nightTarget",
-          select.value
-        );
+        setAction("nightTarget", select.value);
       };
     }
-
-  }
-
-  // =======================================================
-  // DAY VOTE
-  // =======================================================
-
-  else if (
-    data.gameState.phase === "DAY_VOTE"
-  ) {
-
+  } else if (data.gameState.phase === "DAY_VOTE") {
     if (me.voteTarget) {
-
-      if (
-        me.voteTarget === "skip"
-      ) {
-
-        prompt.innerText =
-          "You voted to skip. Waiting for others.";
-
+      if (me.voteTarget === "skip") {
+        prompt.innerText = "You voted to skip. Waiting for others.";
       } else {
-
-        const target =
-          playersCache[me.voteTarget];
-
-        prompt.innerText =
-          target
-            ? `You voted for ${target.name}. Waiting for others.`
-            : "Vote cast. Waiting for others.";
+        const target = playersCache[me.voteTarget];
+        prompt.innerText = target ? `You voted for ${target.name}. Waiting for others.` : "Vote cast. Waiting for others.";
       }
-
-    }
-
-    else {
-
-      prompt.innerText =
-        "Cast your vote to eliminate:";
-
-      select.innerHTML +=
-        `<option value="skip">Skip Vote</option>`;
-
-      select.classList.remove(
-        "hidden"
-      );
-
-      btn.innerText =
-        "Submit Vote";
-
-      btn.classList.remove(
-        "hidden"
-      );
-
+    } else {
+      prompt.innerText = "Cast your vote to eliminate:";
+      select.innerHTML += `<option value="skip">Skip Vote</option>`;
+      select.classList.remove("hidden");
+      btn.innerText = "Submit Vote";
+      btn.classList.remove("hidden");
       btn.onclick = () => {
-
-        if (!select.value) {
-          return;
-        }
-
-        setAction(
-          "voteTarget",
-          select.value
-        );
+        if (!select.value) return;
+        setAction("voteTarget", select.value);
       };
     }
-
-  }
-
-  else {
-
-    prompt.innerText =
-      "Discuss with the town.";
-  }
-
-  // =======================================================
-  // PRIVATE LOGS
-  // =======================================================
-
-  if (
-    me.privateLogs &&
-    me.privateLogs.length > 0
-  ) {
-
-    el("player-private-logs")
-      .classList.remove("hidden");
-
-    el("private-log-list").innerHTML =
-      me.privateLogs
-        .map(
-          (l) => `<li>${l}</li>`
-        )
-        .join("");
-
   } else {
+    prompt.innerText = "Discuss with the town.";
+  }
 
-    el("player-private-logs")
-      .classList.add("hidden");
+  if (me.privateLogs && me.privateLogs.length > 0) {
+    el("player-private-logs").classList.remove("hidden");
+    el("private-log-list").innerHTML = me.privateLogs.map((l) => `<li>${l}</li>`).join("");
+  } else {
+    el("player-private-logs").classList.add("hidden");
   }
 }
 
@@ -2009,200 +936,67 @@ function updatePlayerUI(data) {
 // SET ACTION
 // =========================================================
 
-async function setAction(
-  field,
-  value
-) {
-
-  if (
-    !myRoomCode ||
-    !myPlayerId
-  ) {
-    return;
-  }
-
+async function setAction(field, value) {
+  if (!myRoomCode || !myPlayerId) return;
   try {
-
-    await set(
-      ref(
-        db,
-        `rooms/${myRoomCode}/players/${myPlayerId}/${field}`
-      ),
-      value
-    );
-
-  } catch (error) {
-
-    console.error(
-      "Action submission failed:",
-      error
-    );
-  }
+    await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/${field}`), value);
+  } catch (error) { console.error("Action submission failed:", error); }
 }
 
 // =========================================================
 // RESTART GAME
 // =========================================================
 
-el("btn-restart-game").onclick =
-  async () => {
-
-    const updates = {
-
-      [`rooms/${myRoomCode}/gameState`]: {
-        phase: "LOBBY",
-        round: 1,
-        winner: null
-      },
-
-      [`rooms/${myRoomCode}/logs/announcement`]:
-        "Lobby restarted."
-    };
-
-    Object.keys(
-      playersCache
-    ).forEach(
-      (id) => {
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/isAlive`
-        ] = true;
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/role`
-        ] = "";
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/nightTarget`
-        ] = null;
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/recruitTarget`
-        ] = null;
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/voteTarget`
-        ] = null;
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/pendingRecruitment`
-        ] = false;
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/wasRecruited`
-        ] = false;
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/privateLogs`
-        ] = [];
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/perks`
-        ] = {
-          bulletUsed: false,
-          abilityUsed: false
-        };
-      }
-    );
-
-    try {
-
-      await update(
-        ref(db),
-        updates
-      );
-
-      isAdvancing = false;
-      phaseTransitionInProgress = false;
-
-    } catch (error) {
-
-      console.error(
-        "Restart failed:",
-        error
-      );
-
-      alert(
-        "Could not restart game."
-      );
-    }
+el("btn-restart-game").onclick = async () => {
+  const updates = {
+    [`rooms/${myRoomCode}/gameState`]: { phase: "LOBBY", round: 1, winner: null },
+    [`rooms/${myRoomCode}/logs/announcement`]: "Lobby restarted."
   };
+
+  Object.keys(playersCache).forEach((id) => {
+    updates[`rooms/${myRoomCode}/players/${id}/isAlive`] = true;
+    updates[`rooms/${myRoomCode}/players/${id}/role`] = "";
+    updates[`rooms/${myRoomCode}/players/${id}/nightTarget`] = null;
+    updates[`rooms/${myRoomCode}/players/${id}/recruitTarget`] = null;
+    updates[`rooms/${myRoomCode}/players/${id}/voteTarget`] = null;
+    updates[`rooms/${myRoomCode}/players/${id}/pendingRecruitment`] = false;
+    updates[`rooms/${myRoomCode}/players/${id}/wasRecruited`] = false;
+    updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = [];
+    updates[`rooms/${myRoomCode}/players/${id}/perks`] = { bulletUsed: false, abilityUsed: false };
+  });
+
+  try {
+    await update(ref(db), updates);
+    isAdvancing = false;
+    phaseTransitionInProgress = false;
+  } catch (error) {
+    console.error("Restart failed:", error);
+    alert("Could not restart game.");
+  }
+};
 
 // =========================================================
 // LEAVE ROOM
 // =========================================================
 
-el("btn-leave-room").onclick =
-  async () => {
-
-    if (
-      confirm(
-        "Are you sure you want to leave the game?"
-      )
-    ) {
-
-      try {
-
-        if (
-          myRoomCode &&
-          myPlayerId
-        ) {
-
-          await set(
-            ref(
-              db,
-              `rooms/${myRoomCode}/players/${myPlayerId}`
-            ),
-            null
-          );
-        }
-
-      } catch (error) {
-
-        console.error(
-          "Leave failed:",
-          error
-        );
-      }
-
-      clearSession();
-    }
-  };
+el("btn-leave-room").onclick = async () => {
+  if (confirm("Are you sure you want to leave the game?")) {
+    try {
+      if (myRoomCode && myPlayerId) await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), null);
+    } catch (error) { console.error("Leave failed:", error); }
+    clearSession();
+  }
+};
 
 // =========================================================
 // CLOSE ROOM
 // =========================================================
 
-el("btn-close-room").onclick =
-  async () => {
-
-    if (
-      confirm(
-        "Close this room? All players will be kicked back to the main menu."
-      )
-    ) {
-
-      try {
-
-        if (myRoomCode) {
-
-          await set(
-            ref(
-              db,
-              `rooms/${myRoomCode}`
-            ),
-            null
-          );
-        }
-
-      } catch (error) {
-
-        console.error(
-          "Close room failed:",
-          error
-        );
-      }
-
-      clearSession();
-    }
-  };
+el("btn-close-room").onclick = async () => {
+  if (confirm("Close this room? All players will be kicked back to the main menu.")) {
+    try {
+      if (myRoomCode) await set(ref(db, `rooms/${myRoomCode}`), null);
+    } catch (error) { console.error("Close room failed:", error); }
+    clearSession();
+  }
+};
