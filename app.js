@@ -98,12 +98,6 @@ const ROLES = {
     perk: true
   },
 
-  Barman: {
-    team: "Village",
-    desc: "Distract one player each night. Their night action fails.",
-    win: "Eliminate the Mafia."
-  },
-
   Bodyguard: {
     team: "Village",
     desc: "Guard one player each night. If attacked, they survive and you die instead.",
@@ -493,7 +487,7 @@ function updateHostUI(data) {
 
         // Night action required (Mafia needs nightTarget, Farmer needs nightTarget if alive, etc.)
         const isMafiaTeam = (p.role === "Mafia" || p.role === "Silent Mafia");
-        const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Barman", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
+        const needsNightAction = isMafiaTeam || ["Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Farmer"].includes(p.role);
         
         if (needsNightAction && !p.nightTarget && !(p.role === "Reviver" && p.perks.abilityUsed)) {
           allNightActionsDone = false;
@@ -716,7 +710,6 @@ el("btn-start-game").onclick = async () => {
     "Doctor",
     "Detective",
     "Jailor",
-    "Barman",
     "Reviver",
     "Lookout",
     "Mayor",
@@ -877,41 +870,6 @@ async function advancePhase(nextPhase) {
         }
       }
     });
-
-    // -----------------------------------------
-    // Barman block
-    // -----------------------------------------
-
-    const blockedPlayerId =
-      actions["Barman"]
-        ? actions["Barman"].target
-        : null;
-
-    let blockedRole = null;
-
-    if (
-      blockedPlayerId &&
-      playersCache[blockedPlayerId]
-    ) {
-
-      blockedRole =
-        playersCache[blockedPlayerId].role;
-    }
-
-    if (
-      blockedRole &&
-      actions[blockedRole]
-    ) {
-
-      delete actions[blockedRole];
-    }
-
-    // Barman block for Mafia/Farmer specifically by ID if needed
-    if (blockedPlayerId) {
-      mafiaKills = mafiaKills.filter(k => k.actor !== blockedPlayerId);
-      mafiaRecruits = mafiaRecruits.filter(r => r.actor !== blockedPlayerId);
-      farmerFrames = farmerFrames.filter(f => f.actor !== blockedPlayerId);
-    }
 
     // -----------------------------------------
     // Doctor / Bodyguard
@@ -1881,7 +1839,7 @@ function updatePlayerUI(data) {
         }
       }
 
-      // ADDED: Give Farmer the 'sleep' option alongside Jailor, Snatcher, and Reviver
+      // Farmer retains sleep option here
       if (
         [
           "Jailor",
@@ -1921,7 +1879,6 @@ function updatePlayerUI(data) {
           }
         }
 
-        // ADDED: Only mark the Farmer's ability as used if they actually framed a target, not if they chose to sleep
         if (me.role === "Farmer" && select.value !== "sleep") {
           await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}/perks/abilityUsed`), true);
         }
