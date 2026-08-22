@@ -311,33 +311,53 @@ async function advancePhase(nextPhase) {
     Object.keys(playersCache).forEach(id => { updates[`rooms/${myRoomCode}/players/${id}/nightTarget`] = null; });
   }
 
-  if (nextPhase === "NIGHT") {
-    let votes = {};
-    Object.values(playersCache).forEach(p => {
-      if (p.isAlive && p.voteTarget && p.voteTarget !== 'skip') {
-        let weight = p.role === "Mayor" ? 2 : 1;
-        votes[p.voteTarget] = (votes[p.voteTarget] || 0) + weight;
-      }
-    });
-    
-    let maxVotes = 0;
-    let executed = null;
-    Object.entries(votes).forEach(([target, v]) => {
-      if (v > maxVotes) { maxVotes = v; executed = target; }
-      else if (v === maxVotes) { executed = null; } 
-    });
+ if (nextPhase === "NIGHT") {
+  let votes = {};
 
-    if (executed) {
-      updates[`rooms/${myRoomCode}/players/${executed}/isAlive`] = false;
-      updates[`rooms/${myRoomCode}/logs/announcement`] = `${playersCache[executed].name} was voted out.`;
-      if (playersCache[executed].role === "Fool") {
-        updates[`rooms/${myRoomCode}/gameState/winner`] = "FOOL";
-      }
-    } else {
-      updates[`rooms/${myRoomCode}/logs/announcement`] = "The village tied or skipped. Nobody was executed.";
+  // Count ALL votes, including "skip"
+  Object.values(playersCache).forEach(p => {
+    if (p.isAlive && p.voteTarget) {
+      const weight = p.role === "Mayor" ? 2 : 1;
+      votes[p.voteTarget] = (votes[p.voteTarget] || 0) + weight;
     }
-    Object.keys(playersCache).forEach(id => { updates[`rooms/${myRoomCode}/players/${id}/voteTarget`] = null; });
+  });
+
+  let maxVotes = 0;
+  let executed = null;
+
+  Object.entries(votes).forEach(([target, v]) => {
+    if (v > maxVotes) {
+      maxVotes = v;
+      executed = target;
+    } else if (v === maxVotes) {
+      // Tie = nobody gets executed
+      executed = null;
+    }
+  });
+
+  // If skip has the highest vote count, nobody is executed
+  if (executed === "skip") {
+    executed = null;
   }
+
+  if (executed && playersCache[executed] && playersCache[executed].isAlive) {
+    updates[`rooms/${myRoomCode}/players/${executed}/isAlive`] = false;
+    updates[`rooms/${myRoomCode}/logs/announcement`] =
+      `${playersCache[executed].name} was voted out.`;
+
+    if (playersCache[executed].role === "Fool") {
+      updates[`rooms/${myRoomCode}/gameState/winner`] = "FOOL";
+    }
+  } else {
+    updates[`rooms/${myRoomCode}/logs/announcement`] =
+      "The village skipped or tied. Nobody was executed.";
+  }
+
+  // Clear all votes for next round
+  Object.keys(playersCache).forEach(id => {
+    updates[`rooms/${myRoomCode}/players/${id}/voteTarget`] = null;
+  });
+}
 
   await update(ref(db), updates);
   if(nextPhase === "DAWN" || nextPhase === "NIGHT") checkWinCondition();
@@ -423,18 +443,32 @@ function updatePlayerUI(data) {
   }
 
   select.innerHTML = '<option value="">-- Select Target --</option>';
-  Object.entries(playersCache).forEach(([id, p]) => {
-    if (me.role === "Reviver" && !me.perks.abilityUsed) {
-      if (!p.isAlive) select.innerHTML += `<option value="${id}">${p.name}</option>`;
-    } else {
-      if (p.isAlive) {
-        if (id !== myPlayerId || me.role === "Doctor") {
-          const selfTag = id === myPlayerId ? " (Yourself)" : "";
-          select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
-        }
+
+Object.entries(playersCache).forEach(([id, p]) => {
+  // Reviver can target DEAD players only during NIGHT
+  // During DAY_VOTE, only living players can be voted.
+  if (data.gameState.phase === "DAY_VOTE") {
+    if (p.isAlive) {
+      const selfTag = id === myPlayerId ? " (Yourself)" : "";
+      select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
+    }
+    return;
+  }
+
+  // NIGHT target selection
+  if (me.role === "Reviver" && !me.perks.abilityUsed) {
+    if (!p.isAlive) {
+      select.innerHTML += `<option value="${id}">${p.name}</option>`;
+    }
+  } else {
+    if (p.isAlive) {
+      if (id !== myPlayerId || me.role === "Doctor") {
+        const selfTag = id === myPlayerId ? " (Yourself)" : "";
+        select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
       }
     }
-  });
+  }
+});
 
   if (data.gameState.phase === "NIGHT") {
     if (me.nightTarget) {
