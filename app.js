@@ -23,6 +23,7 @@ let myPlayerId = localStorage.getItem('playerId') || null;
 let playersCache = {};
 let currentPhase = "";
 let myRoleData = {};
+let isAdvancing = false;
 
 // --- ROLE ROSTER ---
 const ROLES = {
@@ -99,7 +100,7 @@ function listenToRoom(roomCode) {
   onValue(ref(db, `rooms/${roomCode}`), (snapshot) => {
     const data = snapshot.val();
     
-    // If room is deleted (host closed it)
+    // If room is deleted
     if (!data) {
       if (!isHost) alert("The host has closed this room.");
       return clearSession();
@@ -119,6 +120,9 @@ function updateHostUI(data) {
   el('host-announcements').innerText = data.logs.announcement;
   
   let aliveCount = 0;
+  let allNightActionsDone = true;
+  let allDayVotesDone = true;
+
   el('host-alive-list').innerHTML = "";
   el('host-dead-list').innerHTML = "";
   
@@ -129,10 +133,10 @@ function updateHostUI(data) {
     li.style.alignItems = "center";
     
     const textSpan = document.createElement('span');
-    textSpan.innerText = `${p.name} ${data.gameState.phase !== 'LOBBY' && p.role ? `(${p.role})` : ''}`;
+    // REMOVED ROLE REVEAL HERE TO KEEP HOST BLIND
+    textSpan.innerText = p.name; 
     li.appendChild(textSpan);
 
-    // Dynamic Kick Button
     const kickBtn = document.createElement('button');
     kickBtn.innerText = "KICK";
     kickBtn.style.padding = "4px 8px";
@@ -145,7 +149,13 @@ function updateHostUI(data) {
     };
     li.appendChild(kickBtn);
 
-    if (p.isAlive) { aliveCount++; el('host-alive-list').appendChild(li); } 
+    if (p.isAlive) { 
+      aliveCount++; 
+      el('host-alive-list').appendChild(li); 
+      // Check if player completed action
+      if (!p.nightTarget) allNightActionsDone = false;
+      if (!p.voteTarget) allDayVotesDone = false;
+    } 
     else { el('host-dead-list').appendChild(li); }
   });
   el('host-alive-count').innerText = aliveCount;
@@ -162,6 +172,15 @@ function updateHostUI(data) {
     btnAdvance.classList.remove('hidden');
   }
 
+  // AUTO ADVANCE ENGINE
+  if (data.gameState.phase === "NIGHT" && aliveCount > 0 && allNightActionsDone && !isAdvancing) {
+    isAdvancing = true;
+    setTimeout(() => { advancePhase("DAWN").finally(() => isAdvancing = false); }, 1500);
+  } else if (data.gameState.phase === "DAY_VOTE" && aliveCount > 0 && allDayVotesDone && !isAdvancing) {
+    isAdvancing = true;
+    setTimeout(() => { advancePhase("NIGHT").finally(() => isAdvancing = false); }, 1500);
+  }
+
   if(data.gameState.winner) { btnAdvance.disabled = true; return; }
   btnAdvance.disabled = false;
   const phaseFlow = { "LOBBY": "NIGHT", "NIGHT": "DAWN", "DAWN": "DAY_VOTE", "DAY_VOTE": "NIGHT" };
@@ -173,7 +192,6 @@ el('btn-start-game').onclick = () => {
   const pKeys = Object.keys(playersCache);
   if (pKeys.length < 6 || pKeys.length > 9) return alert("Need 6 to 9 players.");
   
-  // Assign Roles
   let pool = ["Fool", "Doctor", "Detective", "Jailor", "Barman", "Bodyguard", "Lookout", "Mayor", "Villager", "Villager"];
   pool = pool.sort(() => 0.5 - Math.random()).slice(0, pKeys.length - 1);
   pool.push("Mafia");
@@ -191,52 +209,44 @@ async function advancePhase(nextPhase) {
   const updates = { [`rooms/${myRoomCode}/gameState/phase`]: nextPhase };
   
   if (nextPhase === "DAWN") {
-    // 1. Resolve Actions
     let actions = {}; 
     let deaths = [];
     let logs = {};
     
-    // Extract actions
     Object.entries(playersCache).forEach(([id, p]) => {
-      if (p.isAlive && p.nightTarget) actions[p.role] = { actor: id, target: p.nightTarget };
+      // Ignore 'sleep' commands during resolution
+      if (p.isAlive && p.nightTarget && p.nightTarget !== 'sleep') {
+        actions[p.role] = { actor: id, target: p.nightTarget };
+      }
     });
 
-    // A. Barman Block
     const blockedPlayerId = actions["Barman"] ? actions["Barman"].target : null;
     let blockedRole = null;
     if (blockedPlayerId && playersCache[blockedPlayerId]) blockedRole = playersCache[blockedPlayerId].role;
-
-    // Remove blocked action
     if (blockedRole && actions[blockedRole]) delete actions[blockedRole];
 
-    // B. Protections
     const docTarget = actions["Doctor"] ? actions["Doctor"].target : null;
     const bgTarget = actions["Bodyguard"] ? actions["Bodyguard"].target : null;
 
-    // C. Jailor Shot
     if (actions["Jailor"]) {
       const target = actions["Jailor"].target;
       if (target !== docTarget) deaths.push(target);
       updates[`rooms/${myRoomCode}/players/${actions["Jailor"].actor}/perks/bulletUsed`] = true;
     }
 
-    // D. Mafia Attack
     if (actions["Mafia"]) {
       const target = actions["Mafia"].target;
       if (target === docTarget) {
-        // Doc saves
       } else if (target === bgTarget) {
         if (docTarget === actions["Bodyguard"].actor) {
-           // BG takes hit, but Doc saves BG
         } else {
-           deaths.push(actions["Bodyguard"].actor); // BG dies
+           deaths.push(actions["Bodyguard"].actor); 
         }
       } else {
         deaths.push(target);
       }
     }
 
-    // E. Intel (Detective / Lookout)
     if (actions["Detective"]) {
       const target = actions["Detective"].target;
       const isMafia = playersCache[target].role === "Mafia";
@@ -249,48 +259,41 @@ async function advancePhase(nextPhase) {
       logs[actions["Lookout"].actor] = `${visitors} people visited ${playersCache[target].name}.`;
     }
 
-    // Apply Deaths & Logs
     const uniqueDeaths = [...new Set(deaths)];
     uniqueDeaths.forEach(dId => { updates[`rooms/${myRoomCode}/players/${dId}/isAlive`] = false; });
     Object.entries(logs).forEach(([id, msg]) => { updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = [msg]; });
     
     const deadNames = uniqueDeaths.map(id => playersCache[id].name).join(", ");
     updates[`rooms/${myRoomCode}/logs/announcement`] = deadNames ? `The village wakes to find ${deadNames} murdered.` : "The village wakes peacefully. No one died.";
-    
-    // Clear targets
     Object.keys(playersCache).forEach(id => { updates[`rooms/${myRoomCode}/players/${id}/nightTarget`] = null; });
   }
 
   if (nextPhase === "NIGHT") {
-    // Resolve Day Vote
     let votes = {};
     Object.values(playersCache).forEach(p => {
-      if (p.isAlive && p.voteTarget) {
+      // Ignore 'skip' commands
+      if (p.isAlive && p.voteTarget && p.voteTarget !== 'skip') {
         let weight = p.role === "Mayor" ? 2 : 1;
         votes[p.voteTarget] = (votes[p.voteTarget] || 0) + weight;
       }
     });
     
-    // Find majority
     let maxVotes = 0;
     let executed = null;
     Object.entries(votes).forEach(([target, v]) => {
       if (v > maxVotes) { maxVotes = v; executed = target; }
-      else if (v === maxVotes) { executed = null; } // Tie
+      else if (v === maxVotes) { executed = null; } 
     });
 
     if (executed) {
       updates[`rooms/${myRoomCode}/players/${executed}/isAlive`] = false;
       updates[`rooms/${myRoomCode}/logs/announcement`] = `${playersCache[executed].name} was voted out.`;
-      
       if (playersCache[executed].role === "Fool") {
         updates[`rooms/${myRoomCode}/gameState/winner`] = "FOOL";
       }
     } else {
-      updates[`rooms/${myRoomCode}/logs/announcement`] = "The village tied. Nobody was executed.";
+      updates[`rooms/${myRoomCode}/logs/announcement`] = "The village tied or skipped. Nobody was executed.";
     }
-    
-    // Clear votes
     Object.keys(playersCache).forEach(id => { updates[`rooms/${myRoomCode}/players/${id}/voteTarget`] = null; });
   }
 
@@ -301,7 +304,7 @@ async function advancePhase(nextPhase) {
 async function checkWinCondition() {
   const snap = await get(ref(db, `rooms/${myRoomCode}`));
   const data = snap.val();
-  if (data.gameState.winner) return; // Fool already won
+  if (data.gameState.winner) return;
 
   let aliveMafia = 0;
   let aliveVillage = 0;
@@ -329,7 +332,6 @@ async function checkWinCondition() {
 function updatePlayerUI(data) {
   const me = playersCache[myPlayerId];
   
-  // Detection for being Kicked by Host
   if (!me) {
     alert("You have been removed from the room by the host.");
     clearSession();
@@ -346,16 +348,29 @@ function updatePlayerUI(data) {
     el('role-win').innerText = myRoleData.win;
   }
 
-  // Handle Action UI
   const actionArea = el('player-action-area');
   const select = el('target-select');
   const btn = el('btn-submit-action');
   const prompt = el('action-prompt');
   const feedback = el('action-feedback');
+  const deadContainer = el('player-dead-container');
+  const deadList = el('player-dead-list');
   
   select.classList.add('hidden');
   btn.classList.add('hidden');
   feedback.classList.add('hidden');
+
+  // UPDATE GRAVEYARD UI
+  deadList.innerHTML = "";
+  let deadCount = 0;
+  Object.entries(playersCache).forEach(([id, p]) => {
+    if (!p.isAlive) {
+      deadCount++;
+      deadList.innerHTML += `<li>${p.name}</li>`;
+    }
+  });
+  if (deadCount > 0) deadContainer.classList.remove('hidden');
+  else deadContainer.classList.add('hidden');
 
   if (!me.isAlive) {
     prompt.innerText = "You are DEAD. Please remain quiet.";
@@ -367,7 +382,7 @@ function updatePlayerUI(data) {
     return;
   }
 
-  // Populate Targets
+  // Populate Alive Targets
   select.innerHTML = '<option value="">-- Select Target --</option>';
   Object.entries(playersCache).forEach(([id, p]) => {
     if (p.isAlive && id !== myPlayerId) {
@@ -385,6 +400,8 @@ function updatePlayerUI(data) {
       btn.onclick = () => setAction('nightTarget', 'sleep');
     } else {
       prompt.innerText = "Choose your night target:";
+      // Added Skip Option for all active roles (allows Jailor to save bullet)
+      select.innerHTML += `<option value="sleep">Skip / Sleep</option>`;
       select.classList.remove('hidden');
       btn.innerText = "Confirm Action";
       btn.classList.remove('hidden');
@@ -408,10 +425,10 @@ function updatePlayerUI(data) {
       };
     }
   } else {
+    // Dawn - manual trigger into Day Vote by host after discussion
     prompt.innerText = "Discuss with the town.";
   }
 
-  // Private Logs
   if (me.privateLogs && me.privateLogs.length > 0) {
     el('player-private-logs').classList.remove('hidden');
     el('private-log-list').innerHTML = me.privateLogs.map(l => `<li>${l}</li>`).join('');
