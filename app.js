@@ -1196,175 +1196,146 @@ async function advancePhase(nextPhase) {
 
   if (nextPhase === "NIGHT") {
 
-    let votes = {};
-    let skipVotes = 0;
+  let votes = {};
+  let skipVotes = 0;
 
-    // -----------------------------------------
-    // Count votes
-    // -----------------------------------------
+  // Count votes
+  Object.values(playersCache).forEach(
+    (p) => {
 
-    Object.values(playersCache).forEach(
-      (p) => {
+      if (
+        !p.isAlive ||
+        !p.voteTarget
+      ) {
+        return;
+      }
 
+      const weight =
+        p.role === "Mayor"
+          ? 2
+          : 1;
+
+      // Skip counts as a real vote
+      if (p.voteTarget === "skip") {
+
+        skipVotes += weight;
+
+      } else {
+
+        const target =
+          playersCache[p.voteTarget];
+
+        // Only count votes for living players
         if (
-          !p.isAlive ||
-          !p.voteTarget
+          target &&
+          target.isAlive
         ) {
-          return;
-        }
-
-        const weight =
-          p.role === "Mayor"
-            ? 2
-            : 1;
-
-        // IMPORTANT:
-        // Skip is counted exactly like
-        // a candidate vote.
-        if (p.voteTarget === "skip") {
-
-          skipVotes += weight;
-
-        } else {
-
           votes[p.voteTarget] =
             (votes[p.voteTarget] || 0) +
             weight;
         }
       }
-    );
-
-    // -----------------------------------------
-    // Find highest candidate votes
-    // -----------------------------------------
-
-    let maxPlayerVotes = 0;
-
-    let leaders = [];
-
-    Object.entries(votes).forEach(
-      ([target, voteCount]) => {
-
-        if (
-          voteCount > maxPlayerVotes
-        ) {
-
-          maxPlayerVotes =
-            voteCount;
-
-          leaders = [target];
-
-        } else if (
-          voteCount === maxPlayerVotes
-        ) {
-
-          leaders.push(target);
-        }
-      }
-    );
-
-    let executed = null;
-
-    // -----------------------------------------
-    // EXECUTION RULE
-    //
-    // A player must:
-    //
-    // 1. Have the highest player vote total
-    // 2. Be the ONLY player with that total
-    // 3. Have MORE votes than Skip
-    //
-    // Otherwise nobody is executed.
-    // -----------------------------------------
-
-    if (
-      leaders.length === 1 &&
-      maxPlayerVotes > skipVotes
-    ) {
-
-      executed = leaders[0];
     }
+  );
 
-    // -----------------------------------------
-    // Execute player
-    // -----------------------------------------
+  // Find highest player vote
+  let maxPlayerVotes = 0;
+  let leaders = [];
 
-    if (
-      executed &&
-      playersCache[executed]
-    ) {
-
-      updates[
-        `rooms/${myRoomCode}/players/${executed}/isAlive`
-      ] = false;
-
-      updates[
-        `rooms/${myRoomCode}/logs/announcement`
-      ] =
-        `${playersCache[executed].name} was voted out.`;
-
-      // Fool wins
-      if (
-        playersCache[executed].role === "Fool"
-      ) {
-
-        updates[
-          `rooms/${myRoomCode}/gameState/winner`
-        ] = "FOOL";
-      }
-
-    } else {
-
-      let reason = "";
+  Object.entries(votes).forEach(
+    ([target, voteCount]) => {
 
       if (
-        skipVotes > maxPlayerVotes
+        voteCount > maxPlayerVotes
       ) {
-
-        reason =
-          "The village chose to skip.";
+        maxPlayerVotes = voteCount;
+        leaders = [target];
 
       } else if (
-        leaders.length > 1
+        voteCount === maxPlayerVotes &&
+        voteCount > 0
       ) {
-
-        reason =
-          "The vote was tied.";
-
-      } else if (
-        skipVotes === maxPlayerVotes &&
-        skipVotes > 0
-      ) {
-
-        reason =
-          "Skip tied with the highest vote.";
-
-      } else {
-
-        reason =
-          "Nobody received enough votes.";
+        leaders.push(target);
       }
-
-      updates[
-        `rooms/${myRoomCode}/logs/announcement`
-      ] =
-        `${reason} Nobody was executed.`;
     }
+  );
 
-    // -----------------------------------------
-    // Clear votes
-    // -----------------------------------------
+  let executed = null;
 
-    Object.keys(playersCache).forEach(
-      (id) => {
-
-        updates[
-          `rooms/${myRoomCode}/players/${id}/voteTarget`
-        ] = null;
-      }
-    );
+  // A player executes ONLY if:
+  // 1. They are the unique highest player vote
+  // 2. Their votes are greater than Skip
+  if (
+    leaders.length === 1 &&
+    maxPlayerVotes > skipVotes
+  ) {
+    executed = leaders[0];
   }
 
+  // Execute
+  if (
+    executed &&
+    playersCache[executed] &&
+    playersCache[executed].isAlive
+  ) {
+
+    updates[
+      `rooms/${myRoomCode}/players/${executed}/isAlive`
+    ] = false;
+
+    updates[
+      `rooms/${myRoomCode}/logs/announcement`
+    ] =
+      `${playersCache[executed].name} was voted out.`;
+
+    if (
+      playersCache[executed].role === "Fool"
+    ) {
+      updates[
+        `rooms/${myRoomCode}/gameState/winner`
+      ] = "FOOL";
+    }
+
+  } else {
+
+    let reason = "";
+
+    if (
+      skipVotes > maxPlayerVotes &&
+      skipVotes > 0
+    ) {
+      reason = "Skip received the majority.";
+
+    } else if (
+      skipVotes === maxPlayerVotes &&
+      skipVotes > 0
+    ) {
+      reason = "Skip tied for the highest vote.";
+
+    } else if (
+      leaders.length > 1
+    ) {
+      reason = "The vote was tied.";
+
+    } else {
+      reason = "Nobody received enough votes.";
+    }
+
+    updates[
+      `rooms/${myRoomCode}/logs/announcement`
+    ] =
+      `${reason} Nobody was executed.`;
+  }
+
+  // Clear votes
+  Object.keys(playersCache).forEach(
+    (id) => {
+      updates[
+        `rooms/${myRoomCode}/players/${id}/voteTarget`
+      ] = null;
+    }
+  );
+}
   // =======================================================
   // SAVE
   // =======================================================
@@ -1627,55 +1598,67 @@ function updatePlayerUI(data) {
     return;
   }
 
-  // -----------------------------------------
-  // Target options
-  // -----------------------------------------
+ // -----------------------------------------
+// Target options
+// -----------------------------------------
 
-  select.innerHTML =
-    '<option value="">-- Select Target --</option>';
+select.innerHTML =
+  '<option value="">-- Select Target --</option>';
 
-  Object.entries(playersCache).forEach(
-    ([id, p]) => {
+Object.entries(playersCache).forEach(
+  ([id, p]) => {
 
-      // Reviver can target dead players
+    // NIGHT
+    if (data.gameState.phase === "NIGHT") {
+
+      // Reviver sees ONLY dead players
       if (
         me.role === "Reviver" &&
         !me.perks.abilityUsed
       ) {
-
         if (!p.isAlive) {
-
           select.innerHTML +=
             `<option value="${id}">${p.name}</option>`;
         }
 
+        return;
       }
 
-      // Everyone else targets alive players
-      else {
+      // Other night roles see alive players
+      if (p.isAlive) {
 
-        if (p.isAlive) {
+        if (
+          id !== myPlayerId ||
+          me.role === "Doctor"
+        ) {
+          const selfTag =
+            id === myPlayerId
+              ? " (Yourself)"
+              : "";
 
-          // Doctor can self-target.
-          // Other roles cannot.
-          if (
-            id !== myPlayerId ||
-            me.role === "Doctor"
-          ) {
-
-            const selfTag =
-              id === myPlayerId
-                ? " (Yourself)"
-                : "";
-
-            select.innerHTML +=
-              `<option value="${id}">${p.name}${selfTag}</option>`;
-          }
+          select.innerHTML +=
+            `<option value="${id}">${p.name}${selfTag}</option>`;
         }
       }
-    }
-  );
 
+      return;
+    }
+
+    // DAY VOTE
+    if (data.gameState.phase === "DAY_VOTE") {
+
+      // Reviver behaves like a normal player
+      // during daytime voting
+      if (
+        p.isAlive &&
+        id !== myPlayerId
+      ) {
+        select.innerHTML +=
+          `<option value="${id}">${p.name}</option>`;
+      }
+    }
+  }
+);
   // =======================================================
   // NIGHT
   // =======================================================
