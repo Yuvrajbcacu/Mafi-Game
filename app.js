@@ -32,6 +32,7 @@ const ROLES = {
   Doctor: { team: "Village", desc: "Choose one player each night to protect from the Mafia's attack. You can protect yourself.", win: "Eliminate the Mafia." },
   Detective: { team: "Village", desc: "Investigate one player each night to learn if they are 'Mafia' or 'Not Mafia'.", win: "Eliminate the Mafia." },
   Jailor: { team: "Village", desc: "You have 1 bullet for the entire game. Shoot a suspect at night.", win: "Eliminate the Mafia.", perk: true },
+  Snatcher: { team: "Village", desc: "Once per game, snatch someone's role at night. They become a Villager and you take their role.", win: "Eliminate the Mafia.", perk: true },
   Barman: { team: "Village", desc: "Distract one player each night. Their night action fails.", win: "Eliminate the Mafia." },
   Bodyguard: { team: "Village", desc: "Guard one player each night. If attacked, they survive and you die instead.", win: "Eliminate the Mafia." },
   Lookout: { team: "Village", desc: "Watch one player each night to see if anyone visited them.", win: "Eliminate the Mafia." },
@@ -88,7 +89,7 @@ el('btn-join-room').onclick = async () => {
   localStorage.setItem('playerId', myPlayerId);
   
   await set(ref(db, `rooms/${myRoomCode}/players/${myPlayerId}`), {
-    name, role: "", isAlive: true, nightTarget: null, voteTarget: null, privateLogs: [], perks: { bulletUsed: false }
+    name, role: "", isAlive: true, nightTarget: null, voteTarget: null, privateLogs: [], perks: { bulletUsed: false, abilityUsed: false }
   });
   
   listenToRoom(myRoomCode);
@@ -191,7 +192,8 @@ el('btn-start-game').onclick = () => {
   const pKeys = Object.keys(playersCache);
   if (pKeys.length < 6 || pKeys.length > 9) return alert("Need 6 to 9 players.");
   
-  let pool = ["Fool", "Doctor", "Detective", "Jailor", "Barman", "Bodyguard", "Lookout", "Mayor", "Villager", "Villager"];
+  // Replaced one Villager with the Snatcher in the pool
+  let pool = ["Fool", "Doctor", "Detective", "Jailor", "Barman", "Bodyguard", "Lookout", "Mayor", "Snatcher", "Villager"];
   pool = pool.sort(() => 0.5 - Math.random()).slice(0, pKeys.length - 1);
   pool.push("Mafia");
   pool = pool.sort(() => 0.5 - Math.random());
@@ -211,6 +213,7 @@ async function advancePhase(nextPhase) {
     let actions = {}; 
     let deaths = [];
     let logs = {};
+    const addLog = (id, msg) => { if (!logs[id]) logs[id] = []; logs[id].push(msg); };
     
     Object.entries(playersCache).forEach(([id, p]) => {
       // Ignore 'sleep' commands during resolution
@@ -249,18 +252,35 @@ async function advancePhase(nextPhase) {
     if (actions["Detective"]) {
       const target = actions["Detective"].target;
       const isMafia = playersCache[target].role === "Mafia";
-      logs[actions["Detective"].actor] = `${playersCache[target].name} is ${isMafia ? 'MAFIA' : 'NOT MAFIA'}.`;
+      addLog(actions["Detective"].actor, `${playersCache[target].name} is ${isMafia ? 'MAFIA' : 'NOT MAFIA'}.`);
     }
+
     if (actions["Lookout"]) {
       const target = actions["Lookout"].target;
       let visitors = 0;
       Object.values(actions).forEach(a => { if (a.target === target) visitors++; });
-      logs[actions["Lookout"].actor] = `${visitors} people visited ${playersCache[target].name}.`;
+      addLog(actions["Lookout"].actor, `${visitors} people visited ${playersCache[target].name}.`);
+    }
+
+    // SNATCHER ROLE SWAP
+    if (actions["Snatcher"]) {
+      const target = actions["Snatcher"].target;
+      const snatcherId = actions["Snatcher"].actor;
+      const targetRole = playersCache[target].role;
+
+      // Execute Role Swap
+      updates[`rooms/${myRoomCode}/players/${snatcherId}/role`] = targetRole;
+      updates[`rooms/${myRoomCode}/players/${target}/role`] = "Villager";
+      updates[`rooms/${myRoomCode}/players/${snatcherId}/perks/abilityUsed`] = true;
+
+      // Push secret logs to both parties
+      addLog(snatcherId, `You snatched a role! You are now the ${targetRole}.`);
+      addLog(target, `Your role was snatched! You are now a Villager.`);
     }
 
     const uniqueDeaths = [...new Set(deaths)];
     uniqueDeaths.forEach(dId => { updates[`rooms/${myRoomCode}/players/${dId}/isAlive`] = false; });
-    Object.entries(logs).forEach(([id, msg]) => { updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = [msg]; });
+    Object.entries(logs).forEach(([id, msgArray]) => { updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = msgArray; });
     
     const deadNames = uniqueDeaths.map(id => playersCache[id].name).join(", ");
     updates[`rooms/${myRoomCode}/logs/announcement`] = deadNames ? `The village wakes to find ${deadNames} murdered.` : "The village wakes peacefully. No one died.";
@@ -396,15 +416,15 @@ function updatePlayerUI(data) {
   if (data.gameState.phase === "NIGHT") {
     if (me.nightTarget) {
       prompt.innerText = "Action locked in. Waiting for others.";
-    } else if (["Fool", "Mayor", "Villager"].includes(me.role) || (me.role === "Jailor" && me.perks.bulletUsed)) {
+    } else if (["Fool", "Mayor", "Villager"].includes(me.role) || (me.role === "Jailor" && me.perks.bulletUsed) || (me.role === "Snatcher" && me.perks.abilityUsed)) {
       prompt.innerText = "You have no action tonight. Sleep.";
       btn.innerText = "Go to Sleep";
       btn.classList.remove('hidden');
       btn.onclick = () => setAction('nightTarget', 'sleep');
     } else {
       prompt.innerText = "Choose your night target:";
-      // ONLY Jailor can skip their action
-      if (me.role === "Jailor") {
+      // ONLY Jailor and Snatcher can skip their action voluntarily
+      if (me.role === "Jailor" || me.role === "Snatcher") {
         select.innerHTML += `<option value="sleep">Skip / Sleep</option>`;
       }
       select.classList.remove('hidden');
@@ -457,7 +477,7 @@ el('btn-restart-game').onclick = async () => {
     updates[`rooms/${myRoomCode}/players/${id}/nightTarget`] = null;
     updates[`rooms/${myRoomCode}/players/${id}/voteTarget`] = null;
     updates[`rooms/${myRoomCode}/players/${id}/privateLogs`] = [];
-    updates[`rooms/${myRoomCode}/players/${id}/perks`] = { bulletUsed: false };
+    updates[`rooms/${myRoomCode}/players/${id}/perks`] = { bulletUsed: false, abilityUsed: false };
   });
   await update(ref(db), updates);
 };
