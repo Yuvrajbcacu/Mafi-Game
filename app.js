@@ -422,11 +422,21 @@ function updateHostUI(data) {
 
 el("btn-start-game").onclick = async () => {
   const pKeys = Object.keys(playersCache);
-  if (pKeys.length < 6 || pKeys.length > 9) return alert("Need 6 to 9 players.");
+  const numPlayers = pKeys.length;
+  
+  if (numPlayers < 6 || numPlayers > 9) return alert("Need 6 to 9 players.");
 
   let pool = ["Fool", "Doctor", "Detective", "Jailor", "Snatcher", "Reviver", "Bodyguard", "Lookout", "Mayor", "Villager"];
-  pool = pool.sort(() => 0.5 - Math.random()).slice(0, pKeys.length - 2);
-  pool.push("Mafia", "Farmer");
+
+  // Balance logic: 6-player games do not include Farmer
+  if (numPlayers === 6) {
+    pool = pool.sort(() => 0.5 - Math.random()).slice(0, 5);
+    pool.push("Mafia");
+  } else {
+    pool = pool.sort(() => 0.5 - Math.random()).slice(0, numPlayers - 2);
+    pool.push("Mafia", "Farmer");
+  }
+  
   pool = pool.sort(() => 0.5 - Math.random());
 
   const updates = {};
@@ -525,9 +535,12 @@ async function advancePhase(nextPhase) {
       }
     }
 
+    // Safety check on host side: no recruiting if game size is 6
     if (mafiaRecruits.length > 0) {
       let livingMafiaCount = getActiveMafiaCount(playersCache);
-      if (livingMafiaCount < 2) {
+      const totalPlayersCount = Object.keys(playersCache).length;
+      
+      if (livingMafiaCount < 2 && totalPlayersCount > 6) {
         const recruitTargetId = mafiaRecruits[0].target;
         if (playersCache[recruitTargetId] && playersCache[recruitTargetId].isAlive && playersCache[recruitTargetId].role !== "Farmer") {
           updates[`rooms/${myRoomCode}/players/${recruitTargetId}/pendingRecruitment`] = true;
@@ -708,8 +721,8 @@ function updatePlayerUI(data) {
     return;
   }
 
-  // Safety fallback for perks
   const myPerks = me.perks || { bulletUsed: false, abilityUsed: false };
+  const totalPlayersCount = Object.keys(playersCache).length;
 
   el("player-name-display").innerText = me.name;
   el("player-phase-display").innerText = data.gameState.phase;
@@ -718,7 +731,14 @@ function updatePlayerUI(data) {
     myRoleData = ROLES[me.role] || (me.role === "Silent Mafia" ? { team: "Mafia", desc: "You were recruited into the Mafia and revived as a silent member. You have no active night abilities.", win: "Reach parity with the living village." } : {});
     if (myRoleData) {
       el("role-name").innerText = me.role;
-      el("role-desc").innerText = myRoleData.desc;
+      
+      let desc = myRoleData.desc;
+      // Change description dynamically to warn 6-player Mafia they cannot recruit
+      if (me.role === "Mafia" && totalPlayersCount === 6) {
+        desc = "You are part of the Mafia team. Each night, choose one player to eliminate. (Recruitment is disabled in 6-player games). Blend in during the day.";
+      }
+      
+      el("role-desc").innerText = desc;
       el("role-win").innerText = myRoleData.win;
     }
   }
@@ -861,7 +881,8 @@ function updatePlayerUI(data) {
           if (p.isAlive && (p.role === "Mafia" || p.role === "Silent Mafia")) livingMafiaCount++;
         });
 
-        if (!myPerks.abilityUsed && !me.wasRecruited && livingMafiaCount < 2) {
+        // Hide recruit dropdown if game is exactly 6 players
+        if (!myPerks.abilityUsed && !me.wasRecruited && livingMafiaCount < 2 && totalPlayersCount > 6) {
           const recruitSelect = document.createElement("select");
           recruitSelect.id = "recruit-target-select";
           recruitSelect.innerHTML = '<option value="none">-- Optional: Recruit Player --</option>';
