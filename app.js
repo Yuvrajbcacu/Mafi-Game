@@ -29,7 +29,7 @@ let isAdvancing = false;
 const ROLES = {
   Mafia: { team: "Mafia", desc: "You are the lone imposter. Each night, choose one player to eliminate. Blend in during the day.", win: "Reach parity with the living village." },
   Fool: { team: "Neutral", desc: "You have no night powers. Act suspicious and convince the town to vote you out.", win: "Get voted out during Daytime voting." },
-  Doctor: { team: "Village", desc: "Choose one player each night to protect from the Mafia's attack.", win: "Eliminate the Mafia." },
+  Doctor: { team: "Village", desc: "Choose one player each night to protect from the Mafia's attack. You can protect yourself.", win: "Eliminate the Mafia." },
   Detective: { team: "Village", desc: "Investigate one player each night to learn if they are 'Mafia' or 'Not Mafia'.", win: "Eliminate the Mafia." },
   Jailor: { team: "Village", desc: "You have 1 bullet for the entire game. Shoot a suspect at night.", win: "Eliminate the Mafia.", perk: true },
   Barman: { team: "Village", desc: "Distract one player each night. Their night action fails.", win: "Eliminate the Mafia." },
@@ -133,8 +133,7 @@ function updateHostUI(data) {
     li.style.alignItems = "center";
     
     const textSpan = document.createElement('span');
-    // REMOVED ROLE REVEAL HERE TO KEEP HOST BLIND
-    textSpan.innerText = p.name; 
+    textSpan.innerText = p.name; // Host blind setup
     li.appendChild(textSpan);
 
     const kickBtn = document.createElement('button');
@@ -385,8 +384,12 @@ function updatePlayerUI(data) {
   // Populate Alive Targets
   select.innerHTML = '<option value="">-- Select Target --</option>';
   Object.entries(playersCache).forEach(([id, p]) => {
-    if (p.isAlive && id !== myPlayerId) {
-      select.innerHTML += `<option value="${id}">${p.name}</option>`;
+    if (p.isAlive) {
+      // Allow targeting self ONLY if Doctor
+      if (id !== myPlayerId || me.role === "Doctor") {
+        const selfTag = id === myPlayerId ? " (Yourself)" : "";
+        select.innerHTML += `<option value="${id}">${p.name}${selfTag}</option>`;
+      }
     }
   });
 
@@ -400,8 +403,10 @@ function updatePlayerUI(data) {
       btn.onclick = () => setAction('nightTarget', 'sleep');
     } else {
       prompt.innerText = "Choose your night target:";
-      // Added Skip Option for all active roles (allows Jailor to save bullet)
-      select.innerHTML += `<option value="sleep">Skip / Sleep</option>`;
+      // ONLY Jailor can skip their action
+      if (me.role === "Jailor") {
+        select.innerHTML += `<option value="sleep">Skip / Sleep</option>`;
+      }
       select.classList.remove('hidden');
       btn.innerText = "Confirm Action";
       btn.classList.remove('hidden');
